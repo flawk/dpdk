@@ -120,17 +120,18 @@ ipsec_sa_ctl_set(struct rte_security_ipsec_xform *ipsec,
 	struct rte_crypto_sym_xform *cipher_xform, *auth_xform;
 	int aes_key_len = 0;
 
-	if (ipsec->direction == RTE_SECURITY_IPSEC_SA_DIR_EGRESS) {
-		ctl->direction = ROC_IE_SA_DIR_OUTBOUND;
-		cipher_xform = crypto_xform;
-		auth_xform = crypto_xform->next;
-	} else if (ipsec->direction == RTE_SECURITY_IPSEC_SA_DIR_INGRESS) {
-		ctl->direction = ROC_IE_SA_DIR_INBOUND;
+	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AUTH) {
 		auth_xform = crypto_xform;
 		cipher_xform = crypto_xform->next;
 	} else {
-		return -EINVAL;
+		cipher_xform = crypto_xform;
+		auth_xform = crypto_xform->next;
 	}
+
+	if (ipsec->direction == RTE_SECURITY_IPSEC_SA_DIR_EGRESS)
+		ctl->direction = ROC_IE_SA_DIR_OUTBOUND;
+	else
+		ctl->direction = ROC_IE_SA_DIR_INBOUND;
 
 	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TUNNEL) {
 		if (ipsec->tunnel.type == RTE_SECURITY_IPSEC_TUNNEL_IPV4)
@@ -167,21 +168,23 @@ ipsec_sa_ctl_set(struct rte_security_ipsec_xform *ipsec,
 			return -ENOTSUP;
 		}
 	} else {
-		switch (cipher_xform->cipher.algo) {
-		case RTE_CRYPTO_CIPHER_NULL:
-			ctl->enc_type = ROC_IE_ON_SA_ENC_NULL;
-			break;
-		case RTE_CRYPTO_CIPHER_AES_CBC:
-			ctl->enc_type = ROC_IE_ON_SA_ENC_AES_CBC;
-			aes_key_len = cipher_xform->cipher.key.length;
-			break;
-		case RTE_CRYPTO_CIPHER_AES_CTR:
-			ctl->enc_type = ROC_IE_ON_SA_ENC_AES_CTR;
-			aes_key_len = cipher_xform->cipher.key.length;
-			break;
-		default:
-			plt_err("Unsupported cipher algorithm");
-			return -ENOTSUP;
+		if (cipher_xform != NULL) {
+			switch (cipher_xform->cipher.algo) {
+			case RTE_CRYPTO_CIPHER_NULL:
+				ctl->enc_type = ROC_IE_ON_SA_ENC_NULL;
+				break;
+			case RTE_CRYPTO_CIPHER_AES_CBC:
+				ctl->enc_type = ROC_IE_ON_SA_ENC_AES_CBC;
+				aes_key_len = cipher_xform->cipher.key.length;
+				break;
+			case RTE_CRYPTO_CIPHER_AES_CTR:
+				ctl->enc_type = ROC_IE_ON_SA_ENC_AES_CTR;
+				aes_key_len = cipher_xform->cipher.key.length;
+				break;
+			default:
+				plt_err("Unsupported cipher algorithm");
+				return -ENOTSUP;
+			}
 		}
 
 		switch (auth_xform->auth.algo) {
@@ -208,6 +211,7 @@ ipsec_sa_ctl_set(struct rte_security_ipsec_xform *ipsec,
 			break;
 		case RTE_CRYPTO_AUTH_AES_GMAC:
 			ctl->auth_type = ROC_IE_ON_SA_AUTH_AES_GMAC;
+			aes_key_len = auth_xform->auth.key.length;
 			break;
 		case RTE_CRYPTO_AUTH_AES_XCBC_MAC:
 			ctl->auth_type = ROC_IE_ON_SA_AUTH_AES_XCBC_128;
@@ -262,19 +266,27 @@ fill_ipsec_common_sa(struct rte_security_ipsec_xform *ipsec,
 		     struct rte_crypto_sym_xform *crypto_xform,
 		     struct roc_ie_on_common_sa *common_sa)
 {
-	struct rte_crypto_sym_xform *cipher_xform;
+	struct rte_crypto_sym_xform *cipher_xform, *auth_xform;
 	const uint8_t *cipher_key;
 	int cipher_key_len = 0;
 	int ret;
 
-	if (ipsec->direction == RTE_SECURITY_IPSEC_SA_DIR_INGRESS)
-		cipher_xform = crypto_xform->next;
-	else
-		cipher_xform = crypto_xform;
-
 	ret = ipsec_sa_ctl_set(ipsec, crypto_xform, &common_sa->ctl);
 	if (ret)
 		return ret;
+
+	if (ipsec->esn.value) {
+		common_sa->esn_low = ipsec->esn.low;
+		common_sa->esn_hi = ipsec->esn.hi;
+	}
+
+	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AUTH) {
+		auth_xform = crypto_xform;
+		cipher_xform = crypto_xform->next;
+	} else {
+		cipher_xform = crypto_xform;
+		auth_xform = crypto_xform->next;
+	}
 
 	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AEAD) {
 		if (crypto_xform->aead.algo == RTE_CRYPTO_AEAD_AES_GCM)
@@ -282,17 +294,20 @@ fill_ipsec_common_sa(struct rte_security_ipsec_xform *ipsec,
 		cipher_key = crypto_xform->aead.key.data;
 		cipher_key_len = crypto_xform->aead.key.length;
 	} else {
-		cipher_key = cipher_xform->cipher.key.data;
-		cipher_key_len = cipher_xform->cipher.key.length;
+		if (cipher_xform) {
+			cipher_key = cipher_xform->cipher.key.data;
+			cipher_key_len = cipher_xform->cipher.key.length;
+		}
+
+		if (auth_xform->auth.algo == RTE_CRYPTO_AUTH_AES_GMAC) {
+			memcpy(common_sa->iv.gcm.nonce, &ipsec->salt, 4);
+			cipher_key = auth_xform->auth.key.data;
+			cipher_key_len = auth_xform->auth.key.length;
+		}
 	}
 
 	if (cipher_key_len != 0)
 		memcpy(common_sa->cipher_key, cipher_key, cipher_key_len);
-
-	if (ipsec->esn.value) {
-		common_sa->esn_low = ipsec->esn.low;
-		common_sa->esn_hi = ipsec->esn.hi;
-	}
 
 	return 0;
 }
@@ -303,9 +318,9 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 			  struct rte_crypto_sym_xform *crypto_xform,
 			  struct rte_security_session *sec_sess)
 {
-	struct rte_crypto_sym_xform *auth_xform = crypto_xform->next;
 	struct roc_ie_on_ip_template *template = NULL;
 	struct roc_cpt *roc_cpt = qp->lf.roc_cpt;
+	struct rte_crypto_sym_xform *auth_xform;
 	union roc_on_ipsec_outb_param1 param1;
 	struct cnxk_cpt_inst_tmpl *inst_tmpl;
 	struct roc_ie_on_outb_sa *out_sa;
@@ -338,6 +353,11 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 	if (ipsec->esn.value)
 		sa->esn = ipsec->esn.value;
 
+	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AUTH)
+		auth_xform = crypto_xform;
+	else
+		auth_xform = crypto_xform->next;
+
 	ret = fill_ipsec_common_sa(ipsec, crypto_xform, &out_sa->common_sa);
 	if (ret)
 		return ret;
@@ -347,7 +367,8 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 		return ret;
 
 	if (ctl->enc_type == ROC_IE_ON_SA_ENC_AES_GCM ||
-	    ctl->auth_type == ROC_IE_ON_SA_AUTH_NULL) {
+	    ctl->auth_type == ROC_IE_ON_SA_AUTH_NULL ||
+	    ctl->auth_type == ROC_IE_ON_SA_AUTH_AES_GMAC) {
 		template = &out_sa->aes_gcm.template;
 		ctx_len = offsetof(struct roc_ie_on_outb_sa, aes_gcm.template);
 	} else {
@@ -381,7 +402,10 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 		template->ip4.udp_src = rte_be_to_cpu_16(4500);
 		template->ip4.udp_dst = rte_be_to_cpu_16(4500);
 	} else {
-		ip4->next_proto_id = IPPROTO_ESP;
+		if (ipsec->proto == RTE_SECURITY_IPSEC_SA_PROTO_AH)
+			ip4->next_proto_id = IPPROTO_AH;
+		else
+			ip4->next_proto_id = IPPROTO_ESP;
 	}
 
 	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TUNNEL) {
@@ -439,6 +463,7 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 		auth_key_len = auth_xform->auth.key.length;
 
 		switch (auth_xform->auth.algo) {
+		case RTE_CRYPTO_AUTH_AES_GMAC:
 		case RTE_CRYPTO_AUTH_NULL:
 			break;
 		case RTE_CRYPTO_AUTH_SHA1_HMAC:
@@ -480,9 +505,12 @@ cn9k_ipsec_outb_sa_create(struct cnxk_cpt_qp *qp,
 		if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AEAD) {
 			sa->cipher_iv_off = crypto_xform->aead.iv.offset;
 			sa->cipher_iv_len = crypto_xform->aead.iv.length;
-		} else {
+		} else if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_CIPHER) {
 			sa->cipher_iv_off = crypto_xform->cipher.iv.offset;
 			sa->cipher_iv_len = crypto_xform->cipher.iv.length;
+		} else {
+			sa->cipher_iv_off = crypto_xform->auth.iv.offset;
+			sa->cipher_iv_len = crypto_xform->auth.iv.length;
 		}
 	}
 #else
@@ -539,7 +567,8 @@ cn9k_ipsec_inb_sa_create(struct cnxk_cpt_qp *qp,
 		return ret;
 
 	if (crypto_xform->type == RTE_CRYPTO_SYM_XFORM_AEAD ||
-	    auth_xform->auth.algo == RTE_CRYPTO_AUTH_NULL) {
+	    auth_xform->auth.algo == RTE_CRYPTO_AUTH_NULL ||
+	    auth_xform->auth.algo == RTE_CRYPTO_AUTH_AES_GMAC) {
 		ctx_len = offsetof(struct roc_ie_on_inb_sa,
 				   sha1_or_gcm.hmac_key[0]);
 	} else {
@@ -621,7 +650,8 @@ cn9k_ipsec_xform_verify(struct rte_security_ipsec_xform *ipsec,
 	    ipsec->life.packets_soft_limit != 0)
 		return -ENOTSUP;
 
-	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TRANSPORT) {
+	if (ipsec->mode == RTE_SECURITY_IPSEC_SA_MODE_TRANSPORT &&
+	    ipsec->proto != RTE_SECURITY_IPSEC_SA_PROTO_AH) {
 		enum rte_crypto_sym_xform_type type = crypto->type;
 
 		if (type == RTE_CRYPTO_SYM_XFORM_AEAD) {

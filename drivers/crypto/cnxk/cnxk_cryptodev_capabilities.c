@@ -835,6 +835,31 @@ static const struct rte_cryptodev_capabilities sec_caps_aes[] = {
 			}, }
 		}, }
 	},
+	{	/* AES GMAC (AUTH) */
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,
+		{.sym = {
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,
+			{.auth = {
+				.algo = RTE_CRYPTO_AUTH_AES_GMAC,
+				.block_size = 16,
+				.key_size = {
+					.min = 16,
+					.max = 32,
+					.increment = 8
+				},
+				.digest_size = {
+					.min = 8,
+					.max = 16,
+					.increment = 4
+				},
+				.iv_size = {
+					.min = 12,
+					.max = 12,
+					.increment = 0
+				}
+			}, }
+		}, }
+	},
 };
 
 static const struct rte_cryptodev_capabilities sec_caps_sha1_sha2[] = {
@@ -982,6 +1007,50 @@ static const struct rte_security_capability sec_caps_templ[] = {
 		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
 		.ipsec = {
 			.proto = RTE_SECURITY_IPSEC_SA_PROTO_ESP,
+			.mode = RTE_SECURITY_IPSEC_SA_MODE_TRANSPORT,
+			.direction = RTE_SECURITY_IPSEC_SA_DIR_EGRESS,
+			.options = { 0 },
+		},
+		.crypto_capabilities = NULL,
+	},
+	{	/* IPsec Lookaside Protocol AH Tunnel Ingress */
+		.action = RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL,
+		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
+		.ipsec = {
+			.proto = RTE_SECURITY_IPSEC_SA_PROTO_AH,
+			.mode = RTE_SECURITY_IPSEC_SA_MODE_TUNNEL,
+			.direction = RTE_SECURITY_IPSEC_SA_DIR_INGRESS,
+			.options = { 0 },
+		},
+		.crypto_capabilities = NULL,
+	},
+	{	/* IPsec Lookaside Protocol AH Tunnel Egress */
+		.action = RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL,
+		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
+		.ipsec = {
+			.proto = RTE_SECURITY_IPSEC_SA_PROTO_AH,
+			.mode = RTE_SECURITY_IPSEC_SA_MODE_TUNNEL,
+			.direction = RTE_SECURITY_IPSEC_SA_DIR_EGRESS,
+			.options = { 0 },
+		},
+		.crypto_capabilities = NULL,
+	},
+	{	/* IPsec Lookaside Protocol AH Transport Ingress */
+		.action = RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL,
+		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
+		.ipsec = {
+			.proto = RTE_SECURITY_IPSEC_SA_PROTO_AH,
+			.mode = RTE_SECURITY_IPSEC_SA_MODE_TRANSPORT,
+			.direction = RTE_SECURITY_IPSEC_SA_DIR_INGRESS,
+			.options = { 0 },
+		},
+		.crypto_capabilities = NULL,
+	},
+	{	/* IPsec Lookaside Protocol AH Transport Egress */
+		.action = RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL,
+		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
+		.ipsec = {
+			.proto = RTE_SECURITY_IPSEC_SA_PROTO_AH,
 			.mode = RTE_SECURITY_IPSEC_SA_MODE_TRANSPORT,
 			.direction = RTE_SECURITY_IPSEC_SA_DIR_EGRESS,
 			.options = { 0 },

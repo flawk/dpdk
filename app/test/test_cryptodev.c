@@ -845,6 +845,7 @@ ipsec_proto_testsuite_setup(void)
 	}
 
 	test_ipsec_alg_list_populate();
+	test_ipsec_ah_alg_list_populate();
 
 	/*
 	 * Stop the device. Device would be started again by individual test
@@ -9138,6 +9139,8 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 				0x0000, 0x001a};
 	uint16_t v6_dst[8] = {0x2001, 0x0470, 0xe5bf, 0xdead, 0x4957, 0x2174,
 				0xe82c, 0x4887};
+	const struct rte_ipv4_hdr *ipv4 =
+			(const struct rte_ipv4_hdr *)td[0].output_text.data;
 	struct crypto_testsuite_params *ts_params = &testsuite_params;
 	struct crypto_unittest_params *ut_params = &unittest_params;
 	struct rte_security_capability_idx sec_cap_idx;
@@ -9146,11 +9149,10 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 	uint8_t dev_id = ts_params->valid_devs[0];
 	enum rte_security_ipsec_sa_direction dir;
 	struct ipsec_test_data *res_d_tmp = NULL;
-	uint32_t src = RTE_IPV4(192, 168, 1, 0);
-	uint32_t dst = RTE_IPV4(192, 168, 1, 1);
 	int salt_len, i, ret = TEST_SUCCESS;
 	struct rte_security_ctx *ctx;
 	uint8_t *input_text;
+	uint32_t src, dst;
 	uint32_t verify;
 
 	ut_params->type = RTE_SECURITY_ACTION_TYPE_LOOKASIDE_PROTOCOL;
@@ -9163,6 +9165,9 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 
 	dir = ipsec_xform.direction;
 	verify = flags->tunnel_hdr_verify;
+
+	memcpy(&src, &ipv4->src_addr, sizeof(ipv4->src_addr));
+	memcpy(&dst, &ipv4->dst_addr, sizeof(ipv4->dst_addr));
 
 	if ((dir == RTE_SECURITY_IPSEC_SA_DIR_INGRESS) && verify) {
 		if (verify == RTE_SECURITY_IPSEC_TUNNEL_VERIFY_SRC_DST_ADDR)
@@ -9238,6 +9243,19 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 					"Crypto capabilities not supported\n");
 			return TEST_SKIPPED;
 		}
+	} else if (td[0].auth_only) {
+		memcpy(&ut_params->auth_xform, &td[0].xform.chain.auth,
+		       sizeof(ut_params->auth_xform));
+		ut_params->auth_xform.auth.key.data = td[0].auth_key.data;
+
+		if (test_ipsec_crypto_caps_auth_verify(
+				sec_cap,
+				&ut_params->auth_xform) != 0) {
+			if (!silent)
+				RTE_LOG(INFO, USER1,
+					"Auth crypto capabilities not supported\n");
+			return TEST_SKIPPED;
+		}
 	} else {
 		memcpy(&ut_params->cipher_xform, &td[0].xform.chain.cipher,
 		       sizeof(ut_params->cipher_xform));
@@ -9276,11 +9294,17 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 		.protocol = RTE_SECURITY_PROTOCOL_IPSEC,
 	};
 
-	if (td[0].aead) {
+	if (td[0].aead || td[0].aes_gmac) {
 		salt_len = RTE_MIN(sizeof(ipsec_xform.salt), td[0].salt.len);
 		memcpy(&ipsec_xform.salt, td[0].salt.data, salt_len);
+	}
+
+	if (td[0].aead) {
 		sess_conf.ipsec = ipsec_xform;
 		sess_conf.crypto_xform = &ut_params->aead_xform;
+	} else if (td[0].auth_only) {
+		sess_conf.ipsec = ipsec_xform;
+		sess_conf.crypto_xform = &ut_params->auth_xform;
 	} else {
 		sess_conf.ipsec = ipsec_xform;
 		if (dir == RTE_SECURITY_IPSEC_SA_DIR_EGRESS) {
@@ -9356,6 +9380,8 @@ test_ipsec_proto_process(const struct ipsec_test_data td[],
 
 			if (td[i].aead)
 				len = td[i].xform.aead.aead.iv.length;
+			else if (td[i].aes_gmac)
+				len = td[i].xform.chain.auth.auth.iv.length;
 			else
 				len = td[i].xform.chain.cipher.cipher.iv.length;
 
@@ -9414,8 +9440,9 @@ test_ipsec_proto_known_vec(const void *test_data)
 
 	memcpy(&td_outb, test_data, sizeof(td_outb));
 
-	if (td_outb.aead ||
-	    td_outb.xform.chain.cipher.cipher.algo != RTE_CRYPTO_CIPHER_NULL) {
+	if (td_outb.aes_gmac || td_outb.aead ||
+	    ((td_outb.ipsec_xform.proto != RTE_SECURITY_IPSEC_SA_PROTO_AH) &&
+	     (td_outb.xform.chain.cipher.cipher.algo != RTE_CRYPTO_CIPHER_NULL))) {
 		/* Disable IV gen to be able to test with known vectors */
 		td_outb.ipsec_xform.options.iv_gen_disable = 1;
 	}
@@ -9484,6 +9511,9 @@ test_ipsec_proto_all(const struct ipsec_test_flags *flags)
 			cipher_alg = td_outb->xform.chain.cipher.cipher.algo;
 			auth_alg = td_outb->xform.chain.auth.auth.algo;
 
+			if (td_outb->aes_gmac && cipher_alg != RTE_CRYPTO_CIPHER_NULL)
+				continue;
+
 			/* ICV is not applicable for NULL auth */
 			if (flags->icv_corrupt &&
 			    auth_alg == RTE_CRYPTO_AUTH_NULL)
@@ -9527,6 +9557,52 @@ test_ipsec_proto_all(const struct ipsec_test_flags *flags)
 }
 
 static int
+test_ipsec_ah_proto_all(const struct ipsec_test_flags *flags)
+{
+	struct ipsec_test_data td_outb[IPSEC_TEST_PACKETS_MAX];
+	struct ipsec_test_data td_inb[IPSEC_TEST_PACKETS_MAX];
+	unsigned int i, nb_pkts = 1, pass_cnt = 0;
+	int ret;
+
+	for (i = 0; i < RTE_DIM(ah_alg_list); i++) {
+		test_ipsec_td_prepare(ah_alg_list[i].param1,
+				      ah_alg_list[i].param2,
+				      flags,
+				      td_outb,
+				      nb_pkts);
+
+		ret = test_ipsec_proto_process(td_outb, td_inb, nb_pkts, true,
+					       flags);
+		if (ret == TEST_SKIPPED)
+			continue;
+
+		if (ret == TEST_FAILED)
+			return TEST_FAILED;
+
+		test_ipsec_td_update(td_inb, td_outb, nb_pkts, flags);
+
+		ret = test_ipsec_proto_process(td_inb, NULL, nb_pkts, true,
+					       flags);
+		if (ret == TEST_SKIPPED)
+			continue;
+
+		if (ret == TEST_FAILED)
+			return TEST_FAILED;
+
+		if (flags->display_alg)
+			test_ipsec_display_alg(ah_alg_list[i].param1,
+					       ah_alg_list[i].param2);
+
+		pass_cnt++;
+	}
+
+	if (pass_cnt > 0)
+		return TEST_SUCCESS;
+	else
+		return TEST_SKIPPED;
+}
+
+static int
 test_ipsec_proto_display_list(const void *data __rte_unused)
 {
 	struct ipsec_test_flags flags;
@@ -9536,6 +9612,32 @@ test_ipsec_proto_display_list(const void *data __rte_unused)
 	flags.display_alg = true;
 
 	return test_ipsec_proto_all(&flags);
+}
+
+static int
+test_ipsec_proto_ah_tunnel_ipv4(const void *data __rte_unused)
+{
+	struct ipsec_test_flags flags;
+
+	memset(&flags, 0, sizeof(flags));
+
+	flags.ah = true;
+	flags.display_alg = true;
+
+	return test_ipsec_ah_proto_all(&flags);
+}
+
+static int
+test_ipsec_proto_ah_transport_ipv4(const void *data __rte_unused)
+{
+	struct ipsec_test_flags flags;
+
+	memset(&flags, 0, sizeof(flags));
+
+	flags.ah = true;
+	flags.transport = true;
+
+	return test_ipsec_ah_proto_all(&flags);
 }
 
 static int
@@ -14994,6 +15096,21 @@ static struct unit_test_suite ipsec_proto_testsuite  = {
 			test_ipsec_proto_known_vec,
 			&pkt_null_aes_xcbc),
 		TEST_CASE_NAMED_WITH_DATA(
+			"Outbound known vector (AH tunnel mode IPv4 HMAC-SHA256)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec,
+			&pkt_ah_tunnel_sha256),
+		TEST_CASE_NAMED_WITH_DATA(
+			"Outbound known vector (AH transport mode IPv4 HMAC-SHA256)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec,
+			&pkt_ah_transport_sha256),
+		TEST_CASE_NAMED_WITH_DATA(
+			"Outbound known vector (AH transport mode IPv4 AES-GMAC 128)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec,
+			&pkt_ah_ipv4_aes_gmac_128),
+		TEST_CASE_NAMED_WITH_DATA(
 			"Outbound fragmented packet",
 			ut_setup_security, ut_teardown,
 			test_ipsec_proto_known_vec_fragmented,
@@ -15043,10 +15160,29 @@ static struct unit_test_suite ipsec_proto_testsuite  = {
 			ut_setup_security, ut_teardown,
 			test_ipsec_proto_known_vec_inb,
 			&pkt_null_aes_xcbc),
+		TEST_CASE_NAMED_WITH_DATA(
+			"Inbound known vector (AH tunnel mode IPv4 HMAC-SHA256)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec_inb,
+			&pkt_ah_tunnel_sha256),
+		TEST_CASE_NAMED_WITH_DATA(
+			"Inbound known vector (AH transport mode IPv4 HMAC-SHA256)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec_inb,
+			&pkt_ah_transport_sha256),
+		TEST_CASE_NAMED_WITH_DATA(
+			"Inbound known vector (AH transport mode IPv4 AES-GMAC 128)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_known_vec_inb,
+			&pkt_ah_ipv4_aes_gmac_128),
 		TEST_CASE_NAMED_ST(
 			"Combined test alg list",
 			ut_setup_security, ut_teardown,
 			test_ipsec_proto_display_list),
+		TEST_CASE_NAMED_ST(
+			"Combined test alg list (AH)",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_ah_tunnel_ipv4),
 		TEST_CASE_NAMED_ST(
 			"IV generation",
 			ut_setup_security, ut_teardown,
@@ -15107,6 +15243,10 @@ static struct unit_test_suite ipsec_proto_testsuite  = {
 			"Transport IPv4",
 			ut_setup_security, ut_teardown,
 			test_ipsec_proto_transport_v4),
+		TEST_CASE_NAMED_ST(
+			"AH transport IPv4",
+			ut_setup_security, ut_teardown,
+			test_ipsec_proto_ah_transport_ipv4),
 		TEST_CASE_NAMED_ST(
 			"Transport l4 checksum",
 			ut_setup_security, ut_teardown,
