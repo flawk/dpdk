@@ -145,6 +145,9 @@ npc_parse_item_basic(const struct roc_npc_item_info *item,
 			info->mask = item->mask;
 	}
 
+	if (info->mask == NULL)
+		return NPC_ERR_INVALID_MASK;
+
 	/* mask specified must be subset of hw supported mask
 	 * mask | hw_mask == hw_mask
 	 */
@@ -582,7 +585,7 @@ npc_allocate_mcam_entry(struct mbox *mbox, int prio,
 	if (!rsp_cmd->count)
 		return -ENOSPC;
 
-	memcpy(rsp_local, rsp_cmd, sizeof(*rsp));
+	mbox_memcpy(rsp_local, rsp_cmd, sizeof(*rsp));
 
 	return 0;
 }

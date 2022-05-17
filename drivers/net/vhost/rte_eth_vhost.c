@@ -720,6 +720,7 @@ update_queuing_status(struct rte_eth_dev *dev)
 {
 	struct pmd_internal *internal = dev->data->dev_private;
 	struct vhost_queue *vq;
+	struct rte_vhost_vring_state *state;
 	unsigned int i;
 	int allow_queuing = 1;
 
@@ -730,12 +731,17 @@ update_queuing_status(struct rte_eth_dev *dev)
 	    rte_atomic32_read(&internal->dev_attached) == 0)
 		allow_queuing = 0;
 
+	state = vring_states[dev->data->port_id];
+
 	/* Wait until rx/tx_pkt_burst stops accessing vhost device */
 	for (i = 0; i < dev->data->nb_rx_queues; i++) {
 		vq = dev->data->rx_queues[i];
 		if (vq == NULL)
 			continue;
-		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		if (allow_queuing && state->cur[vq->virtqueue_id])
+			rte_atomic32_set(&vq->allow_queuing, 1);
+		else
+			rte_atomic32_set(&vq->allow_queuing, 0);
 		while (rte_atomic32_read(&vq->while_queuing))
 			rte_pause();
 	}
@@ -744,7 +750,10 @@ update_queuing_status(struct rte_eth_dev *dev)
 		vq = dev->data->tx_queues[i];
 		if (vq == NULL)
 			continue;
-		rte_atomic32_set(&vq->allow_queuing, allow_queuing);
+		if (allow_queuing && state->cur[vq->virtqueue_id])
+			rte_atomic32_set(&vq->allow_queuing, 1);
+		else
+			rte_atomic32_set(&vq->allow_queuing, 0);
 		while (rte_atomic32_read(&vq->while_queuing))
 			rte_pause();
 	}
@@ -966,6 +975,8 @@ vring_state_changed(int vid, uint16_t vring, int enable)
 	state->cur[vring] = enable;
 	state->max_vring = RTE_MAX(vring, state->max_vring);
 	rte_spinlock_unlock(&state->lock);
+
+	update_queuing_status(eth_dev);
 
 	VHOST_LOG(INFO, "vring%u is %s\n",
 			vring, enable ? "enabled" : "disabled");
@@ -1643,11 +1654,11 @@ rte_pmd_vhost_probe(struct rte_vdev_device *dev)
 				&open_int, &tso);
 		if (ret < 0)
 			goto out_free;
+	}
 
-		if (tso == 0) {
-			disable_flags |= (1ULL << VIRTIO_NET_F_HOST_TSO4);
-			disable_flags |= (1ULL << VIRTIO_NET_F_HOST_TSO6);
-		}
+	if (tso == 0) {
+		disable_flags |= (1ULL << VIRTIO_NET_F_HOST_TSO4);
+		disable_flags |= (1ULL << VIRTIO_NET_F_HOST_TSO6);
 	}
 
 	if (rte_kvargs_count(kvlist, ETH_VHOST_LINEAR_BUF) == 1) {

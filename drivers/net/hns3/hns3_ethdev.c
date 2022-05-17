@@ -2015,11 +2015,9 @@ hns3_dev_configure(struct rte_eth_dev *dev)
 			goto cfg_err;
 	}
 
-	/* When RSS is not configured, redirect the packet queue 0 */
 	if ((uint32_t)mq_mode & RTE_ETH_MQ_RX_RSS_FLAG) {
 		conf->rxmode.offloads |= RTE_ETH_RX_OFFLOAD_RSS_HASH;
 		rss_conf = conf->rx_adv_conf.rss_conf;
-		hw->rss_dis_flag = false;
 		ret = hns3_dev_rss_hash_update(dev, &rss_conf);
 		if (ret)
 			goto cfg_err;
@@ -2825,7 +2823,6 @@ hns3_get_board_configuration(struct hns3_hw *hw)
 
 	hw->mac.media_type = cfg.media_type;
 	hw->rss_size_max = cfg.rss_size_max;
-	hw->rss_dis_flag = false;
 	memcpy(hw->mac.mac_addr, cfg.mac_addr, RTE_ETHER_ADDR_LEN);
 	hw->mac.phy_addr = cfg.phy_addr;
 	hw->dcb_info.num_pg = 1;
@@ -4364,10 +4361,12 @@ hns3_service_handler(void *param)
 	struct hns3_adapter *hns = eth_dev->data->dev_private;
 	struct hns3_hw *hw = &hns->hw;
 
-	if (!hns3_is_reset_pending(hns))
+	if (!hns3_is_reset_pending(hns)) {
 		hns3_update_linkstatus_and_event(hw, true);
-	else
+		hns3_update_hw_stats(hw);
+	} else {
 		hns3_warn(hw, "Cancel the query when reset is pending");
+	}
 
 	rte_eal_alarm_set(HNS3_SERVICE_INTERVAL, hns3_service_handler, eth_dev);
 }
@@ -4622,13 +4621,6 @@ hns3_init_pf(struct rte_eth_dev *eth_dev)
 		goto err_cmd_init;
 	}
 
-	/* Hardware statistics of imissed registers cleared. */
-	ret = hns3_update_imissed_stats(hw, true);
-	if (ret) {
-		hns3_err(hw, "clear imissed stats failed, ret = %d", ret);
-		goto err_cmd_init;
-	}
-
 	hns3_config_all_msix_error(hw, true);
 
 	ret = rte_intr_callback_register(pci_dev->intr_handle,
@@ -4654,7 +4646,7 @@ hns3_init_pf(struct rte_eth_dev *eth_dev)
 		goto err_get_config;
 	}
 
-	ret = hns3_tqp_stats_init(hw);
+	ret = hns3_stats_init(hw);
 	if (ret)
 		goto err_get_config;
 
@@ -4700,7 +4692,7 @@ err_enable_intr:
 err_fdir:
 	hns3_uninit_umv_space(hw);
 err_init_hw:
-	hns3_tqp_stats_uninit(hw);
+	hns3_stats_uninit(hw);
 err_get_config:
 	hns3_pf_disable_irq0(hw);
 	rte_intr_disable(pci_dev->intr_handle);
@@ -4734,7 +4726,7 @@ hns3_uninit_pf(struct rte_eth_dev *eth_dev)
 	hns3_flow_uninit(eth_dev);
 	hns3_fdir_filter_uninit(hns);
 	hns3_uninit_umv_space(hw);
-	hns3_tqp_stats_uninit(hw);
+	hns3_stats_uninit(hw);
 	hns3_config_mac_tnl_int(hw, false);
 	hns3_pf_disable_irq0(hw);
 	rte_intr_disable(pci_dev->intr_handle);

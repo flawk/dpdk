@@ -92,6 +92,7 @@ struct mlx5_vdpa_virtq {
 	struct rte_intr_handle *intr_handle;
 	uint64_t err_time[3]; /* RDTSC time of recent errors. */
 	uint32_t n_retry;
+	struct mlx5_devx_virtio_q_couners_attr stats;
 	struct mlx5_devx_virtio_q_couners_attr reset;
 };
 
@@ -113,9 +114,16 @@ enum {
 	MLX5_VDPA_EVENT_MODE_ONLY_INTERRUPT
 };
 
+enum mlx5_dev_state {
+	MLX5_VDPA_STATE_PROBED = 0,
+	MLX5_VDPA_STATE_CONFIGURED,
+	MLX5_VDPA_STATE_IN_PROGRESS /* Shutting down. */
+};
+
 struct mlx5_vdpa_priv {
 	TAILQ_ENTRY(mlx5_vdpa_priv) next;
-	uint8_t configured;
+	bool connected;
+	enum mlx5_dev_state state;
 	pthread_mutex_t vq_config_lock;
 	uint64_t no_traffic_counter;
 	pthread_t timer_tid;
@@ -228,6 +236,15 @@ int mlx5_vdpa_event_qp_create(struct mlx5_vdpa_priv *priv, uint16_t desc_n,
 void mlx5_vdpa_event_qp_destroy(struct mlx5_vdpa_event_qp *eqp);
 
 /**
+ * Create all the event global resources.
+ *
+ * @param[in] priv
+ *   The vdpa driver private structure.
+ */
+int
+mlx5_vdpa_event_qp_global_prepare(struct mlx5_vdpa_priv *priv);
+
+/**
  * Release all the event global resources.
  *
  * @param[in] priv
@@ -274,12 +291,20 @@ int mlx5_vdpa_err_event_setup(struct mlx5_vdpa_priv *priv);
 void mlx5_vdpa_err_event_unset(struct mlx5_vdpa_priv *priv);
 
 /**
- * Release a virtq and all its related resources.
+ * Release virtqs and resources except that to be reused.
  *
  * @param[in] priv
  *   The vdpa driver private structure.
  */
 void mlx5_vdpa_virtqs_release(struct mlx5_vdpa_priv *priv);
+
+/**
+ * Cleanup cached resources of all virtqs.
+ *
+ * @param[in] priv
+ *   The vdpa driver private structure.
+ */
+void mlx5_vdpa_virtqs_cleanup(struct mlx5_vdpa_priv *priv);
 
 /**
  * Create all the HW virtqs resources and all their related resources.
@@ -308,7 +333,7 @@ int mlx5_vdpa_virtqs_prepare(struct mlx5_vdpa_priv *priv);
 int mlx5_vdpa_virtq_enable(struct mlx5_vdpa_priv *priv, int index, int enable);
 
 /**
- * Unset steering and release all its related resources- stop traffic.
+ * Unset steering - stop traffic.
  *
  * @param[in] priv
  *   The vdpa driver private structure.

@@ -6,6 +6,12 @@
 #include <pthread.h>
 #include <sys/types.h>
 
+struct nix_inl_dev;
+struct nix_inl_qint {
+	struct nix_inl_dev *inl_dev;
+	uint16_t qint;
+};
+
 struct nix_inl_dev {
 	/* Base device object */
 	struct dev dev;
@@ -42,8 +48,10 @@ struct nix_inl_dev {
 	uint16_t vwqe_interval;
 	uint16_t cints;
 	uint16_t qints;
-	struct roc_nix_rq rq;
-	uint16_t rq_refs;
+	uint16_t configured_qints;
+	struct roc_nix_rq *rqs;
+	struct nix_inl_qint *qints_mem;
+	uint16_t nb_rqs;
 	bool is_nix1;
 	uint8_t spb_drop_pc;
 	uint8_t lpb_drop_pc;
@@ -59,6 +67,7 @@ struct nix_inl_dev {
 	pthread_t soft_exp_poll_thread;
 	uint32_t soft_exp_poll_freq;
 	uint64_t *sa_soft_exp_ring;
+	bool set_soft_exp_poll;
 
 	/* Soft expiry ring bitmap */
 	struct plt_bitmap *soft_exp_ring_bmap;
@@ -76,6 +85,7 @@ struct nix_inl_dev {
 	uint32_t inb_spi_mask;
 	bool attach_cptlf;
 	bool wqe_skip;
+	bool ts_ena;
 };
 
 int nix_inl_sso_register_irqs(struct nix_inl_dev *inl_dev);

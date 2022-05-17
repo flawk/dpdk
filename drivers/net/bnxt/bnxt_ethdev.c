@@ -177,6 +177,7 @@ static int bnxt_restore_vlan_filters(struct bnxt *bp);
 static void bnxt_dev_recover(void *arg);
 static void bnxt_free_error_recovery_info(struct bnxt *bp);
 static void bnxt_free_rep_info(struct bnxt *bp);
+static int bnxt_check_fw_ready(struct bnxt *bp);
 
 int is_bnxt_in_error(struct bnxt *bp)
 {
@@ -659,6 +660,19 @@ static int bnxt_init_ctx_mem(struct bnxt *bp)
 	return rc;
 }
 
+static inline bool bnxt_force_link_config(struct bnxt *bp)
+{
+	uint16_t subsystem_device_id = bp->pdev->id.subsystem_device_id;
+
+	switch (subsystem_device_id) {
+	case BROADCOM_DEV_957508_N2100:
+	case BROADCOM_DEV_957414_N225:
+		return true;
+	default:
+		return false;
+	}
+}
+
 static int bnxt_update_phy_setting(struct bnxt *bp)
 {
 	struct rte_eth_link new;
@@ -671,11 +685,12 @@ static int bnxt_update_phy_setting(struct bnxt *bp)
 	}
 
 	/*
-	 * On BCM957508-N2100 adapters, FW will not allow any user other
-	 * than BMC to shutdown the port. bnxt_get_hwrm_link_config() call
-	 * always returns link up. Force phy update always in that case.
+	 * Device is not obliged link down in certain scenarios, even
+	 * when forced. When FW does not allow any user other than BMC
+	 * to shutdown the port, bnxt_get_hwrm_link_config() call always
+	 * returns link up. Force phy update always in that case.
 	 */
-	if (!new.link_status || IS_BNXT_DEV_957508_N2100(bp)) {
+	if (!new.link_status || bnxt_force_link_config(bp)) {
 		rc = bnxt_set_hwrm_link_config(bp, true);
 		if (rc) {
 			PMD_DRV_LOG(ERR, "Failed to update PHY settings\n");
@@ -971,16 +986,10 @@ static int bnxt_dev_info_get_op(struct rte_eth_dev *eth_dev,
 	dev_info->min_rx_bufsize = 1;
 	dev_info->max_rx_pktlen = BNXT_MAX_PKT_LEN;
 
-	dev_info->rx_offload_capa = BNXT_DEV_RX_OFFLOAD_SUPPORT;
-	if (bp->flags & BNXT_FLAG_PTP_SUPPORTED)
-		dev_info->rx_offload_capa |= RTE_ETH_RX_OFFLOAD_TIMESTAMP;
-	if (bp->vnic_cap_flags & BNXT_VNIC_CAP_VLAN_RX_STRIP)
-		dev_info->rx_offload_capa |= RTE_ETH_RX_OFFLOAD_VLAN_STRIP;
+	dev_info->rx_offload_capa = bnxt_get_rx_port_offloads(bp);
 	dev_info->tx_queue_offload_capa = RTE_ETH_TX_OFFLOAD_MBUF_FAST_FREE;
-	dev_info->tx_offload_capa = BNXT_DEV_TX_OFFLOAD_SUPPORT |
+	dev_info->tx_offload_capa = bnxt_get_tx_port_offloads(bp) |
 				    dev_info->tx_queue_offload_capa;
-	if (bp->fw_cap & BNXT_FW_CAP_VLAN_TX_INSERT)
-		dev_info->tx_offload_capa |= RTE_ETH_TX_OFFLOAD_VLAN_INSERT;
 	dev_info->flow_type_rss_offloads = BNXT_ETH_RSS_SUPPORT;
 
 	dev_info->speed_capa = bnxt_get_speed_capabilities(bp);
@@ -1342,6 +1351,11 @@ static int bnxt_handle_if_change_status(struct bnxt *bp)
 
 	/* clear fatal flag so that re-init happens */
 	bp->flags &= ~BNXT_FLAG_FATAL_ERROR;
+
+	rc = bnxt_check_fw_ready(bp);
+	if (rc)
+		return rc;
+
 	rc = bnxt_init_resources(bp, true);
 
 	bp->flags &= ~BNXT_FLAG_IF_CHANGE_HOT_FW_RESET_DONE;
@@ -1594,7 +1608,7 @@ int bnxt_dev_start_op(struct rte_eth_dev *eth_dev)
 
 	eth_dev->data->dev_started = 1;
 
-	bnxt_link_update_op(eth_dev, 1);
+	bnxt_link_update_op(eth_dev, 0);
 
 	if (rx_offloads & RTE_ETH_RX_OFFLOAD_VLAN_FILTER)
 		vlan_mask |= RTE_ETH_VLAN_FILTER_MASK;
@@ -1818,6 +1832,14 @@ int bnxt_link_update_op(struct rte_eth_dev *eth_dev, int wait_to_complete)
 	if (bp->link_info == NULL)
 		goto out;
 
+	/* Only single function PF can bring the phy down.
+	 * In certain scenarios, device is not obliged link down even when forced.
+	 * When port is stopped, report link down in those cases.
+	 */
+	if (!eth_dev->data->dev_started &&
+	    (!BNXT_SINGLE_PF(bp) || bnxt_force_link_config(bp)))
+		goto out;
+
 	do {
 		/* Retrieve link info from hardware */
 		rc = bnxt_get_hwrm_link_config(bp, &new);
@@ -1834,12 +1856,6 @@ int bnxt_link_update_op(struct rte_eth_dev *eth_dev, int wait_to_complete)
 
 		rte_delay_ms(BNXT_LINK_WAIT_INTERVAL);
 	} while (cnt--);
-
-	/* Only single function PF can bring phy down.
-	 * When port is stopped, report link down for VF/MH/NPAR functions.
-	 */
-	if (!BNXT_SINGLE_PF(bp) && !eth_dev->data->dev_started)
-		memset(&new, 0, sizeof(new));
 
 out:
 	/* Timed out or success */
@@ -2130,8 +2146,6 @@ static int bnxt_rss_hash_update_op(struct rte_eth_dev *eth_dev,
 		if (rss_conf->rss_hf & BNXT_ETH_RSS_SUPPORT)
 			return -EINVAL;
 	}
-
-	bp->flags |= BNXT_FLAG_UPDATE_HASH;
 
 	/* Update the default RSS VNIC(s) */
 	vnic = BNXT_GET_DEFAULT_VNIC(bp);
@@ -4316,7 +4330,7 @@ static int bnxt_restore_filters(struct bnxt *bp)
 
 static int bnxt_check_fw_ready(struct bnxt *bp)
 {
-	int timeout = bp->fw_reset_max_msecs;
+	int timeout = bp->fw_reset_max_msecs ? : BNXT_MAX_FW_RESET_TIMEOUT;
 	int rc = 0;
 
 	do {

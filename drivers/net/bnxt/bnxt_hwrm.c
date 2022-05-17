@@ -939,6 +939,11 @@ static int __bnxt_hwrm_func_qcaps(struct bnxt *bp)
 		bp->fw_cap |= BNXT_FW_CAP_VLAN_TX_INSERT;
 		PMD_DRV_LOG(DEBUG, "VLAN acceleration for TX is enabled\n");
 	}
+
+	bp->tunnel_disable_flag = rte_le_to_cpu_16(resp->tunnel_disable_flag);
+	if (bp->tunnel_disable_flag)
+		PMD_DRV_LOG(DEBUG, "Tunnel parsing capability is disabled, flags : %#x\n",
+			    bp->tunnel_disable_flag);
 unlock:
 	HWRM_UNLOCK();
 
@@ -1424,17 +1429,17 @@ static int bnxt_hwrm_port_phy_cfg(struct bnxt *bp, struct bnxt_link_info *conf)
 			}
 		}
 		/* AutoNeg - Advertise speeds specified. */
-		if (conf->auto_link_speed_mask &&
+		if ((conf->auto_link_speed_mask || conf->auto_pam4_link_speed_mask) &&
 		    !(conf->phy_flags & HWRM_PORT_PHY_CFG_INPUT_FLAGS_FORCE)) {
 			req.auto_mode =
 				HWRM_PORT_PHY_CFG_INPUT_AUTO_MODE_SPEED_MASK;
-			if (conf->auto_pam4_link_speed_mask &&
-			    bp->link_info->link_signal_mode) {
+			if (conf->auto_pam4_link_speed_mask) {
 				enables |=
 				HWRM_PORT_PHY_CFG_IN_EN_AUTO_PAM4_LINK_SPD_MASK;
 				req.auto_link_pam4_speed_mask =
 				rte_cpu_to_le_16(conf->auto_pam4_link_speed_mask);
-			} else {
+			}
+			if (conf->auto_link_speed_mask) {
 				enables |=
 				HWRM_PORT_PHY_CFG_IN_EN_AUTO_LINK_SPEED_MASK;
 				req.auto_link_speed_mask =
@@ -1506,7 +1511,7 @@ static int bnxt_hwrm_port_phy_qcfg(struct bnxt *bp,
 	link_info->phy_ver[1] = resp->phy_min;
 	link_info->phy_ver[2] = resp->phy_bld;
 	link_info->link_signal_mode =
-		rte_le_to_cpu_16(resp->active_fec_signal_mode);
+		resp->active_fec_signal_mode & HWRM_PORT_PHY_QCFG_OUTPUT_SIGNAL_MODE_MASK;
 	link_info->force_pam4_link_speed =
 			rte_le_to_cpu_16(resp->force_pam4_link_speed);
 	link_info->support_pam4_speeds =

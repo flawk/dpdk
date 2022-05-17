@@ -14,6 +14,9 @@ const struct cnxk_rte_flow_term_info term[] = {
 				     sizeof(struct rte_flow_item_ipv4)},
 	[RTE_FLOW_ITEM_TYPE_IPV6] = {ROC_NPC_ITEM_TYPE_IPV6,
 				     sizeof(struct rte_flow_item_ipv6)},
+	[RTE_FLOW_ITEM_TYPE_IPV6_FRAG_EXT] = {
+			ROC_NPC_ITEM_TYPE_IPV6_FRAG_EXT,
+			sizeof(struct rte_flow_item_ipv6_frag_ext)},
 	[RTE_FLOW_ITEM_TYPE_ARP_ETH_IPV4] = {
 			ROC_NPC_ITEM_TYPE_ARP_ETH_IPV4,
 			sizeof(struct rte_flow_item_arp_eth_ipv4)},
@@ -53,7 +56,9 @@ const struct cnxk_rte_flow_term_info term[] = {
 	[RTE_FLOW_ITEM_TYPE_HIGIG2] = {ROC_NPC_ITEM_TYPE_HIGIG2,
 				       sizeof(struct rte_flow_item_higig2_hdr)},
 	[RTE_FLOW_ITEM_TYPE_RAW] = {ROC_NPC_ITEM_TYPE_RAW,
-				    sizeof(struct rte_flow_item_raw)}};
+				    sizeof(struct rte_flow_item_raw)},
+	[RTE_FLOW_ITEM_TYPE_MARK] = {ROC_NPC_ITEM_TYPE_MARK,
+				     sizeof(struct rte_flow_item_mark)}};
 
 static int
 npc_rss_action_validate(struct rte_eth_dev *eth_dev,
@@ -205,6 +210,7 @@ cnxk_map_actions(struct rte_eth_dev *eth_dev, const struct rte_flow_attr *attr,
 
 		case RTE_FLOW_ACTION_TYPE_SECURITY:
 			in_actions[i].type = ROC_NPC_ACTION_TYPE_SEC;
+			in_actions[i].conf = actions->conf;
 			break;
 		case RTE_FLOW_ACTION_TYPE_OF_POP_VLAN:
 			in_actions[i].type = ROC_NPC_ACTION_TYPE_VLAN_STRIP;
@@ -297,7 +303,14 @@ cnxk_flow_validate(struct rte_eth_dev *eth_dev,
 		return rc;
 	}
 
-	return roc_npc_flow_parse(npc, &in_attr, in_pattern, in_actions, &flow);
+	rc = roc_npc_flow_parse(npc, &in_attr, in_pattern, in_actions, &flow);
+
+	if (rc) {
+		rte_flow_error_set(error, 0, rc, NULL,
+				   "Flow validation failed");
+		return rc;
+	}
+	return 0;
 }
 
 struct roc_npc_flow *

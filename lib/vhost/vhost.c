@@ -1291,10 +1291,14 @@ rte_vhost_vring_call(int vid, uint16_t vring_idx)
 	if (!vq)
 		return -1;
 
+	rte_spinlock_lock(&vq->access_lock);
+
 	if (vq_is_packed(dev))
 		vhost_vring_call_packed(dev, vq);
 	else
 		vhost_vring_call_split(dev, vq);
+
+	rte_spinlock_unlock(&vq->access_lock);
 
 	return 0;
 }
@@ -1899,6 +1903,32 @@ rte_vhost_async_get_inflight(int vid, uint16_t queue_id)
 
 	ret = vq->async->pkts_inflight_n;
 	rte_spinlock_unlock(&vq->access_lock);
+
+	return ret;
+}
+
+int
+rte_vhost_async_get_inflight_thread_unsafe(int vid, uint16_t queue_id)
+{
+	struct vhost_virtqueue *vq;
+	struct virtio_net *dev = get_device(vid);
+	int ret = -1;
+
+	if (dev == NULL)
+		return ret;
+
+	if (queue_id >= VHOST_MAX_VRING)
+		return ret;
+
+	vq = dev->virtqueue[queue_id];
+
+	if (vq == NULL)
+		return ret;
+
+	if (!vq->async)
+		return ret;
+
+	ret = vq->async->pkts_inflight_n;
 
 	return ret;
 }

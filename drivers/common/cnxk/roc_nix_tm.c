@@ -55,7 +55,7 @@ nix_tm_node_reg_conf(struct nix *nix, struct nix_tm_node *node)
 		req = mbox_alloc_msg_nix_txschq_cfg(mbox);
 		req->lvl = NIX_TXSCH_LVL_TL1;
 
-		k = nix_tm_tl1_default_prep(node->parent_hw_id, req->reg,
+		k = nix_tm_tl1_default_prep(nix, node->parent_hw_id, req->reg,
 					    req->regval);
 		req->num_regs = k;
 		rc = mbox_process(mbox);
@@ -590,6 +590,7 @@ nix_tm_sq_flush_pre(struct roc_nix_sq *sq)
 	struct nix_tm_node *node, *sibling;
 	struct nix_tm_node_list *list;
 	enum roc_nix_tm_tree tree;
+	struct msg_req *req;
 	struct mbox *mbox;
 	struct nix *nix;
 	uint16_t qid;
@@ -679,6 +680,12 @@ nix_tm_sq_flush_pre(struct roc_nix_sq *sq)
 			rc);
 		goto cleanup;
 	}
+
+	req = mbox_alloc_msg_nix_rx_sw_sync(mbox);
+	if (!req)
+		return -ENOSPC;
+
+	rc = mbox_process(mbox);
 cleanup:
 	/* Restore cgx state */
 	if (!roc_nix->io_enabled) {
@@ -1281,6 +1288,7 @@ nix_tm_alloc_txschq(struct nix *nix, enum roc_nix_tm_tree tree)
 	} while (pend);
 
 	nix->tm_link_cfg_lvl = rsp->link_cfg_lvl;
+	nix->tm_aggr_lvl_rr_prio = rsp->aggr_lvl_rr_prio;
 	return 0;
 alloc_err:
 	for (i = 0; i < NIX_TXSCH_LVL_CNT; i++) {

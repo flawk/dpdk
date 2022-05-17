@@ -158,6 +158,8 @@ roc_nix_inl_inb_spi_range(struct roc_nix *roc_nix, bool inb_inl_dev,
 
 	inl_dev = idev->nix_inl_dev;
 	if (inb_inl_dev) {
+		if (inl_dev == NULL)
+			goto exit;
 		min = inl_dev->ipsec_in_min_spi;
 		max = inl_dev->ipsec_in_max_spi;
 		mask = inl_dev->inb_spi_mask;
@@ -208,7 +210,7 @@ roc_nix_inl_inb_sa_sz(struct roc_nix *roc_nix, bool inl_dev_sa)
 uintptr_t
 roc_nix_inl_inb_sa_get(struct roc_nix *roc_nix, bool inb_inl_dev, uint32_t spi)
 {
-	uint32_t max_spi, min_spi, mask;
+	uint32_t max_spi = 0, min_spi = 0, mask;
 	uintptr_t sa_base;
 	uint64_t sz;
 
@@ -217,17 +219,20 @@ roc_nix_inl_inb_sa_get(struct roc_nix *roc_nix, bool inb_inl_dev, uint32_t spi)
 	if (!sa_base)
 		return 0;
 
-	/* Check if SPI is in range */
-	mask = roc_nix_inl_inb_spi_range(roc_nix, inb_inl_dev, &min_spi,
-					 &max_spi);
-	if (spi > max_spi || spi < min_spi)
-		plt_warn("Inbound SA SPI %u not in range (%u..%u)", spi,
-			 min_spi, max_spi);
-
 	/* Get SA size */
 	sz = roc_nix_inl_inb_sa_sz(roc_nix, inb_inl_dev);
 	if (!sz)
 		return 0;
+
+	if (roc_nix && roc_nix->custom_sa_action)
+		return (sa_base + (spi * sz));
+
+	/* Check if SPI is in range */
+	mask = roc_nix_inl_inb_spi_range(roc_nix, inb_inl_dev, &min_spi,
+					 &max_spi);
+	if (spi > max_spi || spi < min_spi)
+		plt_nix_dbg("Inbound SA SPI %u not in range (%u..%u)", spi,
+			 min_spi, max_spi);
 
 	/* Basic logic of SPI->SA for now */
 	return (sa_base + ((spi & mask) * sz));
@@ -461,7 +466,7 @@ skip_sa_alloc:
 	nix->outb_se_ring_base =
 		roc_nix->port_id * ROC_NIX_SOFT_EXP_PER_PORT_MAX_RINGS;
 
-	if (inl_dev == NULL) {
+	if (inl_dev == NULL || !inl_dev->set_soft_exp_poll) {
 		nix->outb_se_ring_cnt = 0;
 		return 0;
 	}
@@ -537,11 +542,12 @@ roc_nix_inl_outb_fini(struct roc_nix *roc_nix)
 	plt_free(nix->outb_sa_base);
 	nix->outb_sa_base = NULL;
 
-	if (idev && idev->nix_inl_dev) {
+	if (idev && idev->nix_inl_dev && nix->outb_se_ring_cnt) {
 		inl_dev = idev->nix_inl_dev;
 		ring_base = inl_dev->sa_soft_exp_ring;
+		ring_base += nix->outb_se_ring_base;
 
-		for (i = 0; i < ROC_NIX_INL_MAX_SOFT_EXP_RNGS; i++) {
+		for (i = 0; i < nix->outb_se_ring_cnt; i++) {
 			if (ring_base[i])
 				plt_free(PLT_PTR_CAST(ring_base[i]));
 		}
@@ -582,8 +588,10 @@ int
 roc_nix_inl_dev_rq_get(struct roc_nix_rq *rq)
 {
 	struct idev_cfg *idev = idev_get_cfg();
+	int port_id = rq->roc_nix->port_id;
 	struct nix_inl_dev *inl_dev;
 	struct roc_nix_rq *inl_rq;
+	uint16_t inl_rq_id;
 	struct dev *dev;
 	int rc;
 
@@ -595,19 +603,24 @@ roc_nix_inl_dev_rq_get(struct roc_nix_rq *rq)
 	if (!inl_dev)
 		return 0;
 
+	/* Check if this RQ is already holding reference */
+	if (rq->inl_dev_refs)
+		return 0;
+
+	inl_rq_id = inl_dev->nb_rqs > 1 ? port_id : 0;
+	dev = &inl_dev->dev;
+	inl_rq = &inl_dev->rqs[inl_rq_id];
+
 	/* Just take reference if already inited */
-	if (inl_dev->rq_refs) {
-		inl_dev->rq_refs++;
-		rq->inl_dev_ref = true;
+	if (inl_rq->inl_dev_refs) {
+		inl_rq->inl_dev_refs++;
+		rq->inl_dev_refs = 1;
 		return 0;
 	}
-
-	dev = &inl_dev->dev;
-	inl_rq = &inl_dev->rq;
 	memset(inl_rq, 0, sizeof(struct roc_nix_rq));
 
 	/* Take RQ pool attributes from the first ethdev RQ */
-	inl_rq->qid = 0;
+	inl_rq->qid = inl_rq_id;
 	inl_rq->aura_handle = rq->aura_handle;
 	inl_rq->first_skip = rq->first_skip;
 	inl_rq->later_skip = rq->later_skip;
@@ -685,8 +698,8 @@ roc_nix_inl_dev_rq_get(struct roc_nix_rq *rq)
 		return rc;
 	}
 
-	inl_dev->rq_refs++;
-	rq->inl_dev_ref = true;
+	inl_rq->inl_dev_refs++;
+	rq->inl_dev_refs = 1;
 	return 0;
 }
 
@@ -694,15 +707,17 @@ int
 roc_nix_inl_dev_rq_put(struct roc_nix_rq *rq)
 {
 	struct idev_cfg *idev = idev_get_cfg();
+	int port_id = rq->roc_nix->port_id;
 	struct nix_inl_dev *inl_dev;
 	struct roc_nix_rq *inl_rq;
+	uint16_t inl_rq_id;
 	struct dev *dev;
 	int rc;
 
 	if (idev == NULL)
 		return 0;
 
-	if (!rq->inl_dev_ref)
+	if (!rq->inl_dev_refs)
 		return 0;
 
 	inl_dev = idev->nix_inl_dev;
@@ -712,13 +727,15 @@ roc_nix_inl_dev_rq_put(struct roc_nix_rq *rq)
 		return -EFAULT;
 	}
 
-	rq->inl_dev_ref = false;
-	inl_dev->rq_refs--;
-	if (inl_dev->rq_refs)
+	dev = &inl_dev->dev;
+	inl_rq_id = inl_dev->nb_rqs > 1 ? port_id : 0;
+	inl_rq = &inl_dev->rqs[inl_rq_id];
+
+	rq->inl_dev_refs = 0;
+	inl_rq->inl_dev_refs--;
+	if (inl_rq->inl_dev_refs)
 		return 0;
 
-	dev = &inl_dev->dev;
-	inl_rq = &inl_dev->rq;
 	/* There are no more references, disable RQ */
 	rc = nix_rq_ena_dis(dev, inl_rq, false);
 	if (rc)
@@ -732,25 +749,6 @@ roc_nix_inl_dev_rq_put(struct roc_nix_rq *rq)
 	nix_rq_vwqe_flush(rq, inl_dev->vwqe_interval);
 
 	return rc;
-}
-
-uint64_t
-roc_nix_inl_dev_rq_limit_get(void)
-{
-	struct idev_cfg *idev = idev_get_cfg();
-	struct nix_inl_dev *inl_dev;
-	struct roc_nix_rq *inl_rq;
-
-	if (!idev || !idev->nix_inl_dev)
-		return 0;
-
-	inl_dev = idev->nix_inl_dev;
-	if (!inl_dev->rq_refs)
-		return 0;
-
-	inl_rq = &inl_dev->rq;
-
-	return roc_npa_aura_op_limit_get(inl_rq->aura_handle);
 }
 
 void
@@ -801,15 +799,22 @@ roc_nix_inb_is_with_inl_dev(struct roc_nix *roc_nix)
 }
 
 struct roc_nix_rq *
-roc_nix_inl_dev_rq(void)
+roc_nix_inl_dev_rq(struct roc_nix *roc_nix)
 {
 	struct idev_cfg *idev = idev_get_cfg();
+	int port_id = roc_nix->port_id;
 	struct nix_inl_dev *inl_dev;
+	struct roc_nix_rq *inl_rq;
+	uint16_t inl_rq_id;
 
 	if (idev != NULL) {
 		inl_dev = idev->nix_inl_dev;
-		if (inl_dev != NULL && inl_dev->rq_refs)
-			return &inl_dev->rq;
+		if (inl_dev != NULL) {
+			inl_rq_id = inl_dev->nb_rqs > 1 ? port_id : 0;
+			inl_rq = &inl_dev->rqs[inl_rq_id];
+			if (inl_rq->inl_dev_refs)
+				return inl_rq;
+		}
 	}
 
 	return NULL;
@@ -1009,6 +1014,69 @@ roc_nix_inl_ctx_write(struct roc_nix *roc_nix, void *sa_dptr, void *sa_cptr,
 	}
 	plt_nix_dbg("Could not get CPT LF for CTX write");
 	return -ENOTSUP;
+}
+
+int
+roc_nix_inl_ts_pkind_set(struct roc_nix *roc_nix, bool ts_ena, bool inb_inl_dev)
+{
+	struct idev_cfg *idev = idev_get_cfg();
+	struct nix_inl_dev *inl_dev = NULL;
+	void *sa, *sa_base = NULL;
+	struct nix *nix = NULL;
+	uint16_t max_spi = 0;
+	uint32_t rq_refs = 0;
+	uint8_t pkind = 0;
+	int i;
+
+	if (roc_model_is_cn9k())
+		return 0;
+
+	if (!inb_inl_dev && (roc_nix == NULL))
+		return -EINVAL;
+
+	if (inb_inl_dev) {
+		if ((idev == NULL) || (idev->nix_inl_dev == NULL))
+			return 0;
+		inl_dev = idev->nix_inl_dev;
+	} else {
+		nix = roc_nix_to_nix_priv(roc_nix);
+		if (!nix->inl_inb_ena)
+			return 0;
+		sa_base = nix->inb_sa_base;
+		max_spi = roc_nix->ipsec_in_max_spi;
+	}
+
+	if (inl_dev) {
+		for (i = 0; i < inl_dev->nb_rqs; i++)
+			rq_refs += inl_dev->rqs[i].inl_dev_refs;
+
+		if (rq_refs == 0) {
+			inl_dev->ts_ena = ts_ena;
+			max_spi = inl_dev->ipsec_in_max_spi;
+			sa_base = inl_dev->inb_sa_base;
+		} else if (inl_dev->ts_ena != ts_ena) {
+			if (inl_dev->ts_ena)
+				plt_err("Inline device is already configured with TS enable");
+			else
+				plt_err("Inline device is already configured with TS disable");
+			return -ENOTSUP;
+		} else {
+			return 0;
+		}
+	}
+
+	pkind = ts_ena ? ROC_IE_OT_CPT_TS_PKIND : ROC_IE_OT_CPT_PKIND;
+
+	sa = (uint8_t *)sa_base;
+	if (pkind == ((struct roc_ot_ipsec_inb_sa *)sa)->w0.s.pkind)
+		return 0;
+
+	for (i = 0; i < max_spi; i++) {
+		sa = ((uint8_t *)sa_base) +
+		     (i * ROC_NIX_INL_OT_IPSEC_INB_SA_SZ);
+		((struct roc_ot_ipsec_inb_sa *)sa)->w0.s.pkind = pkind;
+	}
+	return 0;
 }
 
 void

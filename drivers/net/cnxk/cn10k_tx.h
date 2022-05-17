@@ -209,6 +209,37 @@ cn10k_nix_tx_skeleton(struct cn10k_eth_txq *txq, uint64_t *cmd,
 }
 
 static __rte_always_inline void
+cn10k_nix_sec_fc_wait(struct cn10k_eth_txq *txq, uint16_t nb_pkts)
+{
+	int32_t nb_desc, val, newval;
+	int32_t *fc_sw;
+	volatile uint64_t *fc;
+
+	/* Check if there is any CPT instruction to submit */
+	if (!nb_pkts)
+		return;
+
+again:
+	fc_sw = txq->cpt_fc_sw;
+	val = __atomic_sub_fetch(fc_sw, nb_pkts, __ATOMIC_RELAXED);
+	if (likely(val >= 0))
+		return;
+
+	nb_desc = txq->cpt_desc;
+	fc = txq->cpt_fc;
+	while (true) {
+		newval = nb_desc - __atomic_load_n(fc, __ATOMIC_RELAXED);
+		newval -= nb_pkts;
+		if (newval >= 0)
+			break;
+	}
+
+	if (!__atomic_compare_exchange_n(fc_sw, &val, newval, false,
+					 __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+		goto again;
+}
+
+static __rte_always_inline void
 cn10k_nix_sec_steorl(uintptr_t io_addr, uint32_t lmt_id, uint8_t lnum,
 		     uint8_t loff, uint8_t shft)
 {
@@ -246,20 +277,41 @@ cn10k_nix_prep_sec_vec(struct rte_mbuf *m, uint64x2_t *cmd0, uint64x2_t *cmd1,
 {
 	struct cn10k_sec_sess_priv sess_priv;
 	uint32_t pkt_len, dlen_adj, rlen;
+	uint8_t l3l4type, chksum;
 	uint64x2_t cmd01, cmd23;
+	uint8_t l2_len, l3_len;
 	uintptr_t dptr, nixtx;
 	uint64_t ucode_cmd[4];
 	uint64_t *laddr;
-	uint8_t l2_len;
 	uint16_t tag;
 	uint64_t sa;
 
 	sess_priv.u64 = *rte_security_dynfield(m);
 
-	if (flags & NIX_TX_NEED_SEND_HDR_W1)
-		l2_len = vgetq_lane_u8(*cmd0, 8);
-	else
+	if (flags & NIX_TX_NEED_SEND_HDR_W1) {
+		/* Extract l3l4type either from il3il4type or ol3ol4type */
+		if (flags & NIX_TX_OFFLOAD_L3_L4_CSUM_F &&
+		    flags & NIX_TX_OFFLOAD_OL3_OL4_CSUM_F) {
+			l2_len = vgetq_lane_u8(*cmd0, 10);
+			/* L4 ptr from send hdr includes l2 and l3 len */
+			l3_len = vgetq_lane_u8(*cmd0, 11) - l2_len;
+			l3l4type = vgetq_lane_u8(*cmd0, 13);
+		} else {
+			l2_len = vgetq_lane_u8(*cmd0, 8);
+			/* L4 ptr from send hdr includes l2 and l3 len */
+			l3_len = vgetq_lane_u8(*cmd0, 9) - l2_len;
+			l3l4type = vgetq_lane_u8(*cmd0, 12);
+		}
+
+		chksum = (l3l4type & 0x1) << 1 | !!(l3l4type & 0x30);
+		chksum = ~chksum;
+		sess_priv.chksum = sess_priv.chksum & chksum;
+		/* Clear SEND header flags */
+		*cmd0 = vsetq_lane_u16(0, *cmd0, 6);
+	} else {
 		l2_len = m->l2_len;
+		l3_len = m->l3_len;
+	}
 
 	/* Retrieve DPTR */
 	dptr = vgetq_lane_u64(*cmd1, 1);
@@ -267,6 +319,8 @@ cn10k_nix_prep_sec_vec(struct rte_mbuf *m, uint64x2_t *cmd0, uint64x2_t *cmd1,
 
 	/* Calculate dlen adj */
 	dlen_adj = pkt_len - l2_len;
+	/* Exclude l3 len from roundup for transport mode */
+	dlen_adj -= sess_priv.mode ? 0 : l3_len;
 	rlen = (dlen_adj + sess_priv.roundup_len) +
 	       (sess_priv.roundup_byte - 1);
 	rlen &= ~(uint64_t)(sess_priv.roundup_byte - 1);
@@ -291,8 +345,9 @@ cn10k_nix_prep_sec_vec(struct rte_mbuf *m, uint64x2_t *cmd0, uint64x2_t *cmd1,
 	sa_base &= ~0xFFFFUL;
 	sa = (uintptr_t)roc_nix_inl_ot_ipsec_outb_sa(sa_base, sess_priv.sa_idx);
 	ucode_cmd[3] = (ROC_CPT_DFLT_ENG_GRP_SE_IE << 61 | 1UL << 60 | sa);
-	ucode_cmd[0] =
-		(ROC_IE_OT_MAJOR_OP_PROCESS_OUTBOUND_IPSEC << 48 | pkt_len);
+	ucode_cmd[0] = (ROC_IE_OT_MAJOR_OP_PROCESS_OUTBOUND_IPSEC << 48 |
+			((uint64_t)sess_priv.chksum) << 32 |
+			((uint64_t)sess_priv.dec_ttl) << 34 | pkt_len);
 
 	/* CPT Word 0 and Word 1 */
 	cmd01 = vdupq_n_u64((nixtx + 16) | (cn10k_nix_tx_ext_subs(flags) + 1));
@@ -343,12 +398,13 @@ cn10k_nix_prep_sec(struct rte_mbuf *m, uint64_t *cmd, uintptr_t *nixtx_addr,
 	struct cn10k_sec_sess_priv sess_priv;
 	uint32_t pkt_len, dlen_adj, rlen;
 	struct nix_send_hdr_s *send_hdr;
+	uint8_t l3l4type, chksum;
 	uint64x2_t cmd01, cmd23;
 	union nix_send_sg_s *sg;
+	uint8_t l2_len, l3_len;
 	uintptr_t dptr, nixtx;
 	uint64_t ucode_cmd[4];
 	uint64_t *laddr;
-	uint8_t l2_len;
 	uint16_t tag;
 	uint64_t sa;
 
@@ -360,10 +416,30 @@ cn10k_nix_prep_sec(struct rte_mbuf *m, uint64_t *cmd, uintptr_t *nixtx_addr,
 	else
 		sg = (union nix_send_sg_s *)&cmd[2];
 
-	if (flags & NIX_TX_NEED_SEND_HDR_W1)
-		l2_len = cmd[1] & 0xFF;
-	else
+	if (flags & NIX_TX_NEED_SEND_HDR_W1) {
+		/* Extract l3l4type either from il3il4type or ol3ol4type */
+		if (flags & NIX_TX_OFFLOAD_L3_L4_CSUM_F &&
+		    flags & NIX_TX_OFFLOAD_OL3_OL4_CSUM_F) {
+			l2_len = (cmd[1] >> 16) & 0xFF;
+			/* L4 ptr from send hdr includes l2 and l3 len */
+			l3_len = ((cmd[1] >> 24) & 0xFF) - l2_len;
+			l3l4type = (cmd[1] >> 40) & 0xFF;
+		} else {
+			l2_len = cmd[1] & 0xFF;
+			/* L4 ptr from send hdr includes l2 and l3 len */
+			l3_len = ((cmd[1] >> 8) & 0xFF) - l2_len;
+			l3l4type = (cmd[1] >> 32) & 0xFF;
+		}
+
+		chksum = (l3l4type & 0x1) << 1 | !!(l3l4type & 0x30);
+		chksum = ~chksum;
+		sess_priv.chksum = sess_priv.chksum & chksum;
+		/* Clear SEND header flags */
+		cmd[1] &= ~(0xFFFFUL << 32);
+	} else {
 		l2_len = m->l2_len;
+		l3_len = m->l3_len;
+	}
 
 	/* Retrieve DPTR */
 	dptr = *(uint64_t *)(sg + 1);
@@ -371,6 +447,8 @@ cn10k_nix_prep_sec(struct rte_mbuf *m, uint64_t *cmd, uintptr_t *nixtx_addr,
 
 	/* Calculate dlen adj */
 	dlen_adj = pkt_len - l2_len;
+	/* Exclude l3 len from roundup for transport mode */
+	dlen_adj -= sess_priv.mode ? 0 : l3_len;
 	rlen = (dlen_adj + sess_priv.roundup_len) +
 	       (sess_priv.roundup_byte - 1);
 	rlen &= ~(uint64_t)(sess_priv.roundup_byte - 1);
@@ -395,8 +473,9 @@ cn10k_nix_prep_sec(struct rte_mbuf *m, uint64_t *cmd, uintptr_t *nixtx_addr,
 	sa_base &= ~0xFFFFUL;
 	sa = (uintptr_t)roc_nix_inl_ot_ipsec_outb_sa(sa_base, sess_priv.sa_idx);
 	ucode_cmd[3] = (ROC_CPT_DFLT_ENG_GRP_SE_IE << 61 | 1UL << 60 | sa);
-	ucode_cmd[0] =
-		(ROC_IE_OT_MAJOR_OP_PROCESS_OUTBOUND_IPSEC << 48 | pkt_len);
+	ucode_cmd[0] = (ROC_IE_OT_MAJOR_OP_PROCESS_OUTBOUND_IPSEC << 48 |
+			((uint64_t)sess_priv.chksum) << 32 |
+			((uint64_t)sess_priv.dec_ttl) << 34 | pkt_len);
 
 	/* CPT Word 0 and Word 1. Assume no multi-seg support */
 	cmd01 = vdupq_n_u64((nixtx + 16) | (cn10k_nix_tx_ext_subs(flags) + 1));
@@ -866,10 +945,10 @@ cn10k_nix_xmit_pkts(void *tx_queue, uint64_t *ws, struct rte_mbuf **tx_pkts,
 	uintptr_t pa, lbase = txq->lmt_base;
 	uint16_t lmt_id, burst, left, i;
 	uintptr_t c_lbase = lbase;
+	uint64_t lso_tun_fmt = 0;
 	uint64_t mark_fmt = 0;
 	uint8_t mark_flag = 0;
 	rte_iova_t c_io_addr;
-	uint64_t lso_tun_fmt;
 	uint16_t c_lmt_id;
 	uint64_t sa_base;
 	uintptr_t laddr;
@@ -947,6 +1026,7 @@ again:
 	if (flags & NIX_TX_OFFLOAD_SECURITY_F) {
 		/* Reduce pkts to be sent to CPT */
 		burst -= ((c_lnum << 1) + c_loff);
+		cn10k_nix_sec_fc_wait(txq, (c_lnum << 1) + c_loff);
 		cn10k_nix_sec_steorl(c_io_addr, c_lmt_id, c_lnum, c_loff,
 				     c_shft);
 	}
@@ -999,11 +1079,11 @@ cn10k_nix_xmit_pkts_mseg(void *tx_queue, uint64_t *ws,
 	uint16_t segdw, lmt_id, burst, left, i;
 	uint8_t lnum, c_lnum, c_loff;
 	uintptr_t c_lbase = lbase;
+	uint64_t lso_tun_fmt = 0;
 	uint64_t mark_fmt = 0;
 	uint8_t mark_flag = 0;
 	uint64_t data0, data1;
 	rte_iova_t c_io_addr;
-	uint64_t lso_tun_fmt;
 	uint8_t shft, c_shft;
 	__uint128_t data128;
 	uint16_t c_lmt_id;
@@ -1090,6 +1170,7 @@ again:
 	if (flags & NIX_TX_OFFLOAD_SECURITY_F) {
 		/* Reduce pkts to be sent to CPT */
 		burst -= ((c_lnum << 1) + c_loff);
+		cn10k_nix_sec_fc_wait(txq, (c_lnum << 1) + c_loff);
 		cn10k_nix_sec_steorl(c_io_addr, c_lmt_id, c_lnum, c_loff,
 				     c_shft);
 	}
@@ -2634,9 +2715,11 @@ again:
 	left -= burst;
 
 	/* Submit CPT instructions if any */
-	if (flags & NIX_TX_OFFLOAD_SECURITY_F)
+	if (flags & NIX_TX_OFFLOAD_SECURITY_F) {
+		cn10k_nix_sec_fc_wait(txq, (c_lnum << 1) + c_loff);
 		cn10k_nix_sec_steorl(c_io_addr, c_lmt_id, c_lnum, c_loff,
 				     c_shft);
+	}
 
 	/* Trigger LMTST */
 	if (lnum > 16) {
@@ -2728,18 +2811,18 @@ cn10k_nix_xmit_pkts_vector(void *tx_queue, uint64_t *ws,
 
 /* [T_SEC_F] [TSP] [TSO] [NOFF] [VLAN] [OL3OL4CSUM] [L3L4CSUM] */
 #define NIX_TX_FASTPATH_MODES_0_15                                             \
-	T(no_offload, 4, NIX_TX_OFFLOAD_NONE)                                  \
-	T(l3l4csum, 4, L3L4CSUM_F)                                             \
-	T(ol3ol4csum, 4, OL3OL4CSUM_F)                                         \
-	T(ol3ol4csum_l3l4csum, 4, OL3OL4CSUM_F | L3L4CSUM_F)                   \
+	T(no_offload, 6, NIX_TX_OFFLOAD_NONE)                                  \
+	T(l3l4csum, 6, L3L4CSUM_F)                                             \
+	T(ol3ol4csum, 6, OL3OL4CSUM_F)                                         \
+	T(ol3ol4csum_l3l4csum, 6, OL3OL4CSUM_F | L3L4CSUM_F)                   \
 	T(vlan, 6, VLAN_F)                                                     \
 	T(vlan_l3l4csum, 6, VLAN_F | L3L4CSUM_F)                               \
 	T(vlan_ol3ol4csum, 6, VLAN_F | OL3OL4CSUM_F)                           \
 	T(vlan_ol3ol4csum_l3l4csum, 6, VLAN_F | OL3OL4CSUM_F | L3L4CSUM_F)     \
-	T(noff, 4, NOFF_F)                                                     \
-	T(noff_l3l4csum, 4, NOFF_F | L3L4CSUM_F)                               \
-	T(noff_ol3ol4csum, 4, NOFF_F | OL3OL4CSUM_F)                           \
-	T(noff_ol3ol4csum_l3l4csum, 4, NOFF_F | OL3OL4CSUM_F | L3L4CSUM_F)     \
+	T(noff, 6, NOFF_F)                                                     \
+	T(noff_l3l4csum, 6, NOFF_F | L3L4CSUM_F)                               \
+	T(noff_ol3ol4csum, 6, NOFF_F | OL3OL4CSUM_F)                           \
+	T(noff_ol3ol4csum_l3l4csum, 6, NOFF_F | OL3OL4CSUM_F | L3L4CSUM_F)     \
 	T(noff_vlan, 6, NOFF_F | VLAN_F)                                       \
 	T(noff_vlan_l3l4csum, 6, NOFF_F | VLAN_F | L3L4CSUM_F)                 \
 	T(noff_vlan_ol3ol4csum, 6, NOFF_F | VLAN_F | OL3OL4CSUM_F)             \
@@ -2813,19 +2896,19 @@ cn10k_nix_xmit_pkts_vector(void *tx_queue, uint64_t *ws,
 	  TSP_F | TSO_F | NOFF_F | VLAN_F | OL3OL4CSUM_F | L3L4CSUM_F)
 
 #define NIX_TX_FASTPATH_MODES_64_79                                            \
-	T(sec, 4, T_SEC_F)                                                     \
-	T(sec_l3l4csum, 4, T_SEC_F | L3L4CSUM_F)                               \
-	T(sec_ol3ol4csum, 4, T_SEC_F | OL3OL4CSUM_F)                           \
-	T(sec_ol3ol4csum_l3l4csum, 4, T_SEC_F | OL3OL4CSUM_F | L3L4CSUM_F)     \
+	T(sec, 6, T_SEC_F)                                                     \
+	T(sec_l3l4csum, 6, T_SEC_F | L3L4CSUM_F)                               \
+	T(sec_ol3ol4csum, 6, T_SEC_F | OL3OL4CSUM_F)                           \
+	T(sec_ol3ol4csum_l3l4csum, 6, T_SEC_F | OL3OL4CSUM_F | L3L4CSUM_F)     \
 	T(sec_vlan, 6, T_SEC_F | VLAN_F)                                       \
 	T(sec_vlan_l3l4csum, 6, T_SEC_F | VLAN_F | L3L4CSUM_F)                 \
 	T(sec_vlan_ol3ol4csum, 6, T_SEC_F | VLAN_F | OL3OL4CSUM_F)             \
 	T(sec_vlan_ol3ol4csum_l3l4csum, 6,                                     \
 	  T_SEC_F | VLAN_F | OL3OL4CSUM_F | L3L4CSUM_F)                        \
-	T(sec_noff, 4, T_SEC_F | NOFF_F)                                       \
-	T(sec_noff_l3l4csum, 4, T_SEC_F | NOFF_F | L3L4CSUM_F)                 \
-	T(sec_noff_ol3ol4csum, 4, T_SEC_F | NOFF_F | OL3OL4CSUM_F)             \
-	T(sec_noff_ol3ol4csum_l3l4csum, 4,                                     \
+	T(sec_noff, 6, T_SEC_F | NOFF_F)                                       \
+	T(sec_noff_l3l4csum, 6, T_SEC_F | NOFF_F | L3L4CSUM_F)                 \
+	T(sec_noff_ol3ol4csum, 6, T_SEC_F | NOFF_F | OL3OL4CSUM_F)             \
+	T(sec_noff_ol3ol4csum_l3l4csum, 6,                                     \
 	  T_SEC_F | NOFF_F | OL3OL4CSUM_F | L3L4CSUM_F)                        \
 	T(sec_noff_vlan, 6, T_SEC_F | NOFF_F | VLAN_F)                         \
 	T(sec_noff_vlan_l3l4csum, 6, T_SEC_F | NOFF_F | VLAN_F | L3L4CSUM_F)   \

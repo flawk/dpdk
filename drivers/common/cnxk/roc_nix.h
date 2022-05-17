@@ -303,7 +303,7 @@ struct roc_nix_rq {
 	bool spb_drop_ena;
 	/* End of Input parameters */
 	struct roc_nix *roc_nix;
-	bool inl_dev_ref;
+	uint16_t inl_dev_refs;
 };
 
 struct roc_nix_cq {
@@ -405,6 +405,7 @@ struct roc_nix {
 	bool io_enabled;
 	bool rx_ptp_ena;
 	uint16_t cints;
+	bool custom_sa_action;
 
 #define ROC_NIX_MEM_SZ (6 * 1024)
 	uint8_t reserved[ROC_NIX_MEM_SZ] __plt_cache_aligned;

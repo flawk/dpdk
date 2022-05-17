@@ -155,9 +155,19 @@ nix_security_setup(struct cnxk_eth_dev *dev)
 		dev->outb.sa_base = roc_nix_inl_outb_sa_base_get(nix);
 		dev->outb.sa_bmap_mem = mem;
 		dev->outb.sa_bmap = bmap;
+
+		dev->outb.fc_sw_mem = plt_zmalloc(dev->outb.nb_crypto_qs *
+							  RTE_CACHE_LINE_SIZE,
+						  RTE_CACHE_LINE_SIZE);
+		if (!dev->outb.fc_sw_mem) {
+			plt_err("Outbound fc sw mem alloc failed");
+			goto sa_bmap_free;
+		}
 	}
 	return 0;
 
+sa_bmap_free:
+	plt_free(dev->outb.sa_bmap_mem);
 sa_dptr_free:
 	if (dev->inb.sa_dptr)
 		plt_free(dev->inb.sa_dptr);
@@ -253,6 +263,9 @@ nix_security_release(struct cnxk_eth_dev *dev)
 			plt_free(dev->outb.sa_dptr);
 			dev->outb.sa_dptr = NULL;
 		}
+
+		plt_free(dev->outb.fc_sw_mem);
+		dev->outb.fc_sw_mem = NULL;
 	}
 
 	dev->inb.inl_dev = false;
@@ -309,6 +322,9 @@ nix_init_flow_ctrl_config(struct rte_eth_dev *eth_dev)
 	enum roc_nix_fc_mode fc_mode = ROC_NIX_FC_FULL;
 	struct cnxk_fc_cfg *fc = &dev->fc_cfg;
 	int rc;
+
+	if (roc_nix_is_sdp(&dev->nix))
+		return 0;
 
 	/* To avoid Link credit deadlock on Ax, disable Tx FC if it's enabled */
 	if (roc_model_is_cn96_ax() &&
@@ -528,19 +544,6 @@ cnxk_nix_rx_queue_setup(struct rte_eth_dev *eth_dev, uint16_t qid,
 		plt_nix_dbg("Freeing memory prior to re-allocation %d", qid);
 		dev_ops->rx_queue_release(eth_dev, qid);
 		eth_dev->data->rx_queues[qid] = NULL;
-	}
-
-	/* Clam up cq limit to size of packet pool aura for LBK
-	 * to avoid meta packet drop as LBK does not currently support
-	 * backpressure.
-	 */
-	if (dev->rx_offloads & RTE_ETH_RX_OFFLOAD_SECURITY && roc_nix_is_lbk(nix)) {
-		uint64_t pkt_pool_limit = roc_nix_inl_dev_rq_limit_get();
-
-		/* Use current RQ's aura limit if inl rq is not available */
-		if (!pkt_pool_limit)
-			pkt_pool_limit = roc_npa_aura_op_limit_get(mp->pool_id);
-		nb_desc = RTE_MAX(nb_desc, pkt_pool_limit);
 	}
 
 	/* Its a no-op when inline device is not used */
@@ -1116,6 +1119,9 @@ cnxk_nix_configure(struct rte_eth_dev *eth_dev)
 	nb_rxq = RTE_MAX(data->nb_rx_queues, 1);
 	nb_txq = RTE_MAX(data->nb_tx_queues, 1);
 
+	if (roc_nix_is_lbk(nix))
+		nix->enable_loop = eth_dev->data->dev_conf.lpbk_mode;
+
 	/* Alloc a nix lf */
 	rc = roc_nix_lf_alloc(nix, nb_rxq, nb_txq, rx_cfg);
 	if (rc) {
@@ -1239,6 +1245,9 @@ cnxk_nix_configure(struct rte_eth_dev *eth_dev)
 		}
 	}
 
+	if (roc_nix_is_lbk(nix))
+		goto skip_lbk_setup;
+
 	/* Configure loop back mode */
 	rc = roc_nix_mac_loopback_enable(nix,
 					 eth_dev->data->dev_conf.lpbk_mode);
@@ -1247,6 +1256,7 @@ cnxk_nix_configure(struct rte_eth_dev *eth_dev)
 		goto cq_fini;
 	}
 
+skip_lbk_setup:
 	/* Setup Inline security support */
 	rc = nix_security_setup(dev);
 	if (rc)
@@ -1652,6 +1662,7 @@ cnxk_eth_dev_init(struct rte_eth_dev *eth_dev)
 	/* Initialize base roc nix */
 	nix->pci_dev = pci_dev;
 	nix->hw_vlan_ins = true;
+	nix->port_id = eth_dev->data->port_id;
 	rc = roc_nix_dev_init(nix);
 	if (rc) {
 		plt_err("Failed to initialize roc nix rc=%d", rc);
@@ -1758,15 +1769,15 @@ cnxk_eth_dev_uninit(struct rte_eth_dev *eth_dev, bool reset)
 	struct rte_eth_fc_conf fc_conf;
 	int rc, i;
 
-	/* Disable switch hdr pkind */
-	roc_nix_switch_hdr_set(&dev->nix, 0, 0, 0, 0);
-
 	plt_free(eth_dev->security_ctx);
 	eth_dev->security_ctx = NULL;
 
 	/* Nothing to be done for secondary processes */
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY)
 		return 0;
+
+	/* Disable switch hdr pkind */
+	roc_nix_switch_hdr_set(&dev->nix, 0, 0, 0, 0);
 
 	/* Clear the flag since we are closing down */
 	dev->configured = 0;
@@ -1904,7 +1915,7 @@ cnxk_nix_remove(struct rte_pci_device *pci_dev)
 
 	/* Check if this device is hosting common resource */
 	nix = roc_idev_npa_nix_get();
-	if (nix->pci_dev != pci_dev)
+	if (!nix || nix->pci_dev != pci_dev)
 		return 0;
 
 	/* Try nix fini now */

@@ -2118,18 +2118,20 @@ bond_ethdev_stop(struct rte_eth_dev *eth_dev)
 	internals->link_status_polling_enabled = 0;
 	for (i = 0; i < internals->slave_count; i++) {
 		uint16_t slave_id = internals->slaves[i].port_id;
+
+		internals->slaves[i].last_link_status = 0;
+		ret = rte_eth_dev_stop(slave_id);
+		if (ret != 0) {
+			RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
+				     slave_id);
+			return ret;
+		}
+
+		/* active slaves need to be deactivated. */
 		if (find_slave_by_id(internals->active_slaves,
 				internals->active_slave_count, slave_id) !=
-						internals->active_slave_count) {
-			internals->slaves[i].last_link_status = 0;
-			ret = rte_eth_dev_stop(slave_id);
-			if (ret != 0) {
-				RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
-					     slave_id);
-				return ret;
-			}
+					internals->active_slave_count)
 			deactivate_slave(eth_dev, slave_id);
-		}
 	}
 
 	return 0;
@@ -2154,6 +2156,7 @@ bond_ethdev_close(struct rte_eth_dev *dev)
 			RTE_BOND_LOG(ERR, "Failed to stop device on port %u",
 				     port_id);
 			skipped++;
+			continue;
 		}
 
 		if (rte_eth_bond_slave_remove(bond_port_id, port_id) != 0) {
@@ -3617,13 +3620,18 @@ bond_ethdev_configure(struct rte_eth_dev *dev)
 			       internals->rss_key_len);
 		} else {
 			if (internals->rss_key_len > sizeof(default_rss_key)) {
-				RTE_BOND_LOG(ERR,
-				       "There is no suitable default hash key");
-				return -EINVAL;
+				/*
+				 * If the rss_key includes standard_rss_key and
+				 * extended_hash_key, the rss key length will be
+				 * larger than default rss key length, so it should
+				 * re-calculate the hash key.
+				 */
+				for (i = 0; i < internals->rss_key_len; i++)
+					internals->rss_key[i] = (uint8_t)rte_rand();
+			} else {
+				memcpy(internals->rss_key, default_rss_key,
+					internals->rss_key_len);
 			}
-
-			memcpy(internals->rss_key, default_rss_key,
-			       internals->rss_key_len);
 		}
 
 		for (i = 0; i < RTE_DIM(internals->reta_conf); i++) {

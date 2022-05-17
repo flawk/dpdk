@@ -251,6 +251,26 @@ Runtime Config Options
    With the above configuration, application can enable inline IPsec processing
    for 128 outbound SAs.
 
+- ``Enable custom SA action`` (default ``0``)
+
+   Custom SA action can be enabled by specifying ``custom_sa_act`` ``devargs`` parameter.
+
+   For example::
+
+      -a 0002:02:00.0,custom_sa_act=1
+
+   With the above configuration, application can enable custom SA action. This
+   configuration allows the potential for a MCAM entry to match many SAs,
+   rather than only match a single SA.
+   For cnxk device sa_index will be calculated based on SPI value. So, it will
+   be 1 to 1 mapping. By enabling this devargs and setting a MCAM rule, will
+   allow application to configure the sa_index as part of session create. And
+   later original SPI value can be updated using session update.
+   For example, application can set sa_index as 0 using session create as SPI value
+   and later can update the original SPI value (for example 0x10000001) using
+   session update. And create a flow rule with security action and algorithm as
+   RTE_PMD_CNXK_SEC_ACTION_ALG0 and sa_hi as 0x1000 and sa_lo as 0x0001.
+
 - ``Outbound CPT LF queue size`` (default ``8200``)
 
    Size of Outbound CPT LF queue in number of descriptors can be specified by
@@ -405,6 +425,13 @@ Example usage in testpmd::
                   --rx-offloads=0x00080000 --rxq 8 --txq 8
    testpmd> flow create 0 ingress pattern eth / raw relative is 0 pattern \
           spec ab pattern mask ab offset is 4 / end actions queue index 1 / end
+
+RTE Flow mark item support
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- ``RTE_FLOW_ITEM_TYPE_MARK`` can be used to create ingress flow rules to match
+  packets from CPT(second pass packets). When mark item type is used, it should
+  be the first item in the patterns specification.
 
 Inline device support for CN10K
 -------------------------------

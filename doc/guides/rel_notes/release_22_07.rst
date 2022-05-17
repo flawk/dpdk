@@ -55,15 +55,31 @@ New Features
      Also, make sure to start the actual text at the margin.
      =======================================================
 
+* **Added vhost API to get the number of in-flight packets.**
+
+  Added an API which can get the number of in-flight packets in
+  vhost async data path without using lock.
+
 * **Updated Intel iavf driver.**
 
   * Added Tx QoS queue rate limitation support.
   * Added quanta size configuration support.
+  * Added ``DEV_RX_OFFLOAD_TIMESTAMP`` support.
+
+* **Updated Intel ice driver.**
+
+ * Added support for RSS RETA configure in DCF mode.
+ * Added support for RSS HASH configure in DCF mode.
+ * Added support for MTU configure in DCF mode.
+ * Added support for promisc configuration in DCF mode.
+ * Added support for MAC configuration in DCF mode.
+ * Added support for VLAN filter and offload configuration in DCF mode.
 
 * **Updated Mellanox mlx5 driver.**
 
   * Added support for promiscuous mode on Windows.
   * Added support for MTU on Windows.
+  * Added matching and RSS on IPsec ESP.
 
 * **Updated Marvell cnxk crypto driver.**
 

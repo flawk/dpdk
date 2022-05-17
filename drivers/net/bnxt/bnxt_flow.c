@@ -1074,7 +1074,6 @@ bnxt_update_filter_flags_en(struct bnxt_filter_info *filter,
 		filter1, filter->fw_l2_filter_id, filter->l2_ref_cnt);
 }
 
-/* Valid actions supported along with RSS are count and mark. */
 static int
 bnxt_validate_rss_action(const struct rte_flow_action actions[])
 {
@@ -1116,12 +1115,54 @@ bnxt_vnic_rss_cfg_update(struct bnxt *bp,
 			 struct rte_flow_error *error)
 {
 	const struct rte_flow_action_rss *rss;
-	unsigned int rss_idx, i;
+	unsigned int rss_idx, i, j, fw_idx;
 	uint16_t hash_type;
 	uint64_t types;
 	int rc;
 
 	rss = (const struct rte_flow_action_rss *)act->conf;
+
+	/* must specify either all the Rx queues created by application or zero queues */
+	if (rss->queue_num && vnic->rx_queue_cnt != rss->queue_num) {
+		rte_flow_error_set(error,
+				   EINVAL,
+				   RTE_FLOW_ERROR_TYPE_ACTION,
+				   act,
+				   "Incorrect RXQ count");
+		rc = -rte_errno;
+		goto ret;
+	}
+
+	/* Validate Rx queues */
+	for (i = 0; i < rss->queue_num; i++) {
+		PMD_DRV_LOG(DEBUG, "RSS action Queue %d\n", rss->queue[i]);
+
+		if (rss->queue[i] >= bp->rx_nr_rings ||
+		    !bp->rx_queues[rss->queue[i]]) {
+			rte_flow_error_set(error,
+					   EINVAL,
+					   RTE_FLOW_ERROR_TYPE_ACTION,
+					   act,
+					   "Invalid queue ID for RSS");
+			rc = -rte_errno;
+			goto ret;
+		}
+	}
+
+	/* Duplicate queue ids are not supported. */
+	for (i = 0; i < rss->queue_num; i++) {
+		for (j = i + 1; j < rss->queue_num; j++) {
+			if (rss->queue[i] == rss->queue[j]) {
+				rte_flow_error_set(error,
+						   EINVAL,
+						   RTE_FLOW_ERROR_TYPE_ACTION,
+						   act,
+						   "Duplicate queue ID for RSS");
+				rc = -rte_errno;
+				goto ret;
+			}
+		}
+	}
 
 	/* Currently only Toeplitz hash is supported. */
 	if (rss->func != RTE_ETH_HASH_FUNCTION_DEFAULT &&
@@ -1190,28 +1231,22 @@ bnxt_vnic_rss_cfg_update(struct bnxt *bp,
 	if (rss->queue_num == 0)
 		goto skip_rss_table;
 
-	/* Validate Rx queues */
-	for (i = 0; i < rss->queue_num; i++) {
-		PMD_DRV_LOG(DEBUG, "RSS action Queue %d\n", rss->queue[i]);
-
-		if (rss->queue[i] >= bp->rx_nr_rings ||
-		    !bp->rx_queues[rss->queue[i]]) {
-			rte_flow_error_set(error,
-					   EINVAL,
-					   RTE_FLOW_ERROR_TYPE_ACTION,
-					   act,
-					   "Invalid queue ID for RSS");
-			rc = -rte_errno;
-			goto ret;
-		}
-	}
-
 	/* Prepare the indirection table */
-	for (rss_idx = 0; rss_idx < HW_HASH_INDEX_SIZE; rss_idx++) {
+	for (rss_idx = 0, fw_idx = 0; rss_idx < HW_HASH_INDEX_SIZE;
+	     rss_idx++, fw_idx++) {
+		uint8_t *rxq_state = bp->eth_dev->data->rx_queue_state;
 		struct bnxt_rx_queue *rxq;
 		uint32_t idx;
 
-		idx = rss->queue[rss_idx % rss->queue_num];
+		for (i = 0; i < bp->rx_cp_nr_rings; i++) {
+			idx = rss->queue[fw_idx % rss->queue_num];
+			if (rxq_state[idx] != RTE_ETH_QUEUE_STATE_STOPPED)
+				break;
+			fw_idx++;
+		}
+
+		if (i == bp->rx_cp_nr_rings)
+			return 0;
 
 		if (BNXT_CHIP_P5(bp)) {
 			rxq = bp->rx_queues[idx];
@@ -1404,23 +1439,6 @@ use_vnic:
 				HWRM_CFA_NTUPLE_FILTER_ALLOC_INPUT_FLAGS_DROP;
 
 		bnxt_update_filter_flags_en(filter, filter1, use_ntuple);
-		break;
-	case RTE_FLOW_ACTION_TYPE_COUNT:
-		vnic0 = &bp->vnic_info[0];
-		filter1 = bnxt_get_l2_filter(bp, filter, vnic0);
-		if (filter1 == NULL) {
-			rte_flow_error_set(error,
-					   ENOSPC,
-					   RTE_FLOW_ERROR_TYPE_ACTION,
-					   act,
-					   "New filter not available");
-			rc = -rte_errno;
-			goto ret;
-		}
-
-		filter->fw_l2_filter_id = filter1->fw_l2_filter_id;
-		filter->flow_id = filter1->flow_id;
-		filter->flags = HWRM_CFA_NTUPLE_FILTER_ALLOC_INPUT_FLAGS_METER;
 		break;
 	case RTE_FLOW_ACTION_TYPE_VF:
 		act_vf = (const struct rte_flow_action_vf *)act->conf;

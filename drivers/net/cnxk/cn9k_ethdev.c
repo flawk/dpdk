@@ -241,6 +241,17 @@ cn9k_nix_rx_queue_setup(struct rte_eth_dev *eth_dev, uint16_t qid,
 	if (rc)
 		return rc;
 
+	/* Do initial mtu setup for RQ0 before device start */
+	if (!qid) {
+		rc = nix_recalc_mtu(eth_dev);
+		if (rc)
+			return rc;
+
+		/* Update offload flags */
+		dev->rx_offload_flags = nix_rx_offload_flags(eth_dev);
+		dev->tx_offload_flags = nix_tx_offload_flags(eth_dev);
+	}
+
 	rq = &dev->rqs[qid];
 	cq = &dev->cqs[qid];
 
@@ -702,8 +713,12 @@ cn9k_nix_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 
 	/* Find eth dev allocated */
 	eth_dev = rte_eth_dev_allocated(pci_dev->device.name);
-	if (!eth_dev)
+	if (!eth_dev) {
+		/* Ignore if ethdev is in mid of detach state in secondary */
+		if (rte_eal_process_type() != RTE_PROC_PRIMARY)
+			return 0;
 		return -ENOENT;
+	}
 
 	if (rte_eal_process_type() != RTE_PROC_PRIMARY) {
 		/* Setup callbacks for secondary process */
@@ -737,8 +752,14 @@ cn9k_nix_probe(struct rte_pci_driver *pci_drv, struct rte_pci_device *pci_dev)
 	roc_nix_ptp_info_cb_register(&dev->nix, cn9k_nix_ptp_info_update_cb);
 
 	/* Update HW erratas */
-	if (roc_model_is_cn96_a0() || roc_model_is_cn95_a0())
+	if (roc_errata_nix_has_cq_min_size_4k())
 		dev->cq_min_4k = 1;
+
+	if (dev->nix.custom_sa_action) {
+		dev->nix.custom_sa_action = 0;
+		plt_info("WARNING: Custom SA action is enabled. It's not supported"
+			 " on cn9k device. Disabling it");
+	}
 	return 0;
 }
 
