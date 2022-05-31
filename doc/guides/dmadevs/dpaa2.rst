@@ -1,10 +1,10 @@
 ..  SPDX-License-Identifier: BSD-3-Clause
-    Copyright 2018 NXP
+    Copyright 2018-2022 NXP
 
 NXP DPAA2 QDMA Driver
 =====================
 
-The DPAA2 QDMA is an implementation of the rawdev API, that provide means
+The DPAA2 QDMA is an implementation of the dmadev API, that provide means
 to initiate a DMA transaction from CPU. The initiated DMA is performed
 without CPU being involved in the actual DMA transaction. This is achieved
 via using the DPDMAI device exposed by MC.
@@ -15,12 +15,13 @@ More information can be found at `NXP Official Website
 Features
 --------
 
-The DPAA2 QDMA implements following features in the rawdev API;
+The DPAA2 QDMA implements following features in the dmadev API;
 
 - Supports issuing DMA of data within memory without hogging CPU while
   performing DMA operation.
 - Supports configuring to optionally get status of the DMA translation on
   per DMA operation basis.
+- Supports statistics.
 
 Supported DPAA2 SoCs
 --------------------
@@ -50,20 +51,20 @@ For enabling logs, use the following EAL parameter:
 
 .. code-block:: console
 
-   ./your_qdma_application <EAL args> --log-level=pmd.raw.dpaa2.qdma,<level>
+   ./your_qdma_application <EAL args> --log-level=pmd.dma.dpaa2.qdma,<level>
 
-Using ``pmd.raw.dpaa2.qdma`` as log matching criteria, all Event PMD logs can be
+Using ``pmd.dma.dpaa2.qdma`` as log matching criteria, all Event PMD logs can be
 enabled which are lower than logging ``level``.
 
 
 Initialization
 --------------
 
-The DPAA2 QDMA is exposed as a vdev device which consists of dpdmai devices.
+The DPAA2 QDMA is exposed as a dma device which consists of dpdmai devices.
 On EAL initialization, dpdmai devices will be probed and populated into the
-rawdevices. The rawdev ID of the device can be obtained using
+dmadevices. The dmadev ID of the device can be obtained using
 
-* Invoking ``rte_rawdev_get_dev_id("dpdmai.x")`` from the application
+* Invoking ``rte_dma_get_dev_id_by_name("dpdmai.x")`` from the application
   where x is the object ID of the DPDMAI object created by MC. Use can
   use this index for further rawdev function calls.
 

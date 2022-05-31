@@ -839,6 +839,7 @@ F: doc/guides/nics/nfb.rst
 F: doc/guides/nics/features/nfb.ini
 
 Netronome nfp
+M: Chaoyong He <chaoyong.he@corigine.com>
 M: Niklas Soderlund <niklas.soderlund@corigine.com>
 F: drivers/net/nfp/
 F: doc/guides/nics/nfp.rst
@@ -1203,6 +1204,12 @@ M: Nipun Gupta <nipun.gupta@nxp.com>
 F: drivers/dma/dpaa/
 F: doc/guides/dmadevs/dpaa.rst
 
+NXP DPAA2 QDMA
+M: Nipun Gupta <nipun.gupta@nxp.com>
+M: Hemant Agrawal <hemant.agrawal@nxp.com>
+F: drivers/dma/dpaa2/
+F: doc/guides/dmadevs/dpaa2.rst
+
 
 RegEx Drivers
 -------------
@@ -1383,11 +1390,6 @@ NXP DPAA2 CMDIF
 M: Nipun Gupta <nipun.gupta@nxp.com>
 F: drivers/raw/dpaa2_cmdif/
 F: doc/guides/rawdevs/dpaa2_cmdif.rst
-
-NXP DPAA2 QDMA
-M: Nipun Gupta <nipun.gupta@nxp.com>
-F: drivers/raw/dpaa2_qdma/
-F: doc/guides/rawdevs/dpaa2_qdma.rst
 
 
 Packet processing
