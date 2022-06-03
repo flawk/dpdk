@@ -81,10 +81,19 @@ New Features
   * Added support for MTU on Windows.
   * Added matching and RSS on IPsec ESP.
 
+* **Added Elliptic Curve Diffie-Hellman (ECDH) algorithm in cryptodev.**
+
+  Added support for Elliptic Curve Diffie Hellman (ECDH) asymmetric
+  algorithm in cryptodev.
+
 * **Updated Marvell cnxk crypto driver.**
 
   * Added AH mode support in lookaside protocol (IPsec) for CN9K & CN10K.
   * Added AES-GMAC support in lookaside protocol (IPsec) for CN9K & CN10K.
+
+* **Updated Intel QuickAssist Technology (QAT) crypto PMD.**
+
+  * Added support for secp384r1 elliptic curve.
 
 * **Added eventdev API to quiesce an event port.**
 
