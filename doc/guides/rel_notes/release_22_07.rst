@@ -55,16 +55,44 @@ New Features
      Also, make sure to start the actual text at the margin.
      =======================================================
 
+* **Added protocol based input color selection for meter.**
+
+  Added new functions ``rte_mtr_color_in_protocol_set()``,
+  ``rte_mtr_color_in_protocol_get()``,
+  ``rte_mtr_color_in_protocol_priority_get()``,
+  ``rte_mtr_meter_vlan_table_update()``
+  and updated ``struct rte_mtr_params`` and ``struct rte_mtr_capabilities`` to
+  support protocol based input color selection for meter.
+
+* **Added telemetry for module EEPROM.**
+
+  Added telemetry command to dump module EEPROM.
+  Added support for module EEPROM information format defined in:
+
+    * SFF-8079 revision 1.7
+    * SFF-8472 revision 12.0
+    * SFF-8636 revision 2.7
+
 * **Added vhost API to get the number of in-flight packets.**
 
   Added an API which can get the number of in-flight packets in
   vhost async data path without using lock.
+
+* **Added vhost async dequeue API to receive packets from guest.**
+
+  Added vhost async dequeue API which can leverage DMA devices to
+  accelerate receiving packets from guest.
+
+* **Added vhost API to get the device type of a vDPA device.**
+
+  Added an API which can get the device type of vDPA device.
 
 * **Updated Intel iavf driver.**
 
   * Added Tx QoS queue rate limitation support.
   * Added quanta size configuration support.
   * Added ``DEV_RX_OFFLOAD_TIMESTAMP`` support.
+  * Added Protocol Agnostic Flow Offloading support in AVF FDIR and RSS.
 
 * **Updated Intel ice driver.**
 
@@ -74,12 +102,35 @@ New Features
  * Added support for promisc configuration in DCF mode.
  * Added support for MAC configuration in DCF mode.
  * Added support for VLAN filter and offload configuration in DCF mode.
+ * Added Tx QoS queue / queue group rate limitation configure support.
+ * Added Tx QoS queue / queue group priority configuration support.
+ * Added Tx QoS queue weight configuration support.
+
+* **Updated Intel igc driver.**
+
+  Added Intel Foxville I226 devices in ``igc`` driver.
+  See the doc:`../nics/igc` NIC guide for more details.
 
 * **Updated Mellanox mlx5 driver.**
 
   * Added support for promiscuous mode on Windows.
   * Added support for MTU on Windows.
   * Added matching and RSS on IPsec ESP.
+
+* **Updated VMware vmxnet3 networking driver.**
+
+  * Added version 5 support.
+  * Added RETA query and RETA update support.
+  * Added version 6 support with some new features:
+
+    * Increased maximum MTU up to 9190;
+    * Increased maximum number of Rx and Tx queues;
+    * Removed power-of-two limitations on Rx and Tx queue size;
+    * Extended interrupt structures (required for additional queues).
+
+* **Updated Wangxun ngbe driver.**
+
+  * Added support for yt8531s PHY.
 
 * **Added Elliptic Curve Diffie-Hellman (ECDH) algorithm in cryptodev.**
 
@@ -152,6 +203,10 @@ API Changes
   which is a wrapper for the PPC header file ``altivec.h``,
   undefines the AltiVec keyword ``vector``.
   The alternative keyword ``__vector`` should be used instead.
+
+* Experimental structures ``struct rte_mtr_params``
+  and ``struct rte_mtr_capabilities`` updated to support
+  protocol based input color for meter.
 
 
 ABI Changes

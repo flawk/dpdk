@@ -39,6 +39,7 @@
 #include "ethdev_driver.h"
 #include "ethdev_profile.h"
 #include "ethdev_private.h"
+#include "sff_telemetry.h"
 
 struct rte_eth_dev rte_eth_devices[RTE_MAX_ETHPORTS];
 
@@ -1533,8 +1534,9 @@ rte_eth_dev_stop(uint16_t port_id)
 	/* point fast-path functions to dummy ones */
 	eth_dev_fp_ops_reset(rte_eth_fp_ops + port_id);
 
-	dev->data->dev_started = 0;
 	ret = (*dev->dev_ops->dev_stop)(dev);
+	if (ret == 0)
+		dev->data->dev_started = 0;
 	rte_ethdev_trace_stop(port_id, ret);
 
 	return ret;
@@ -1574,7 +1576,13 @@ rte_eth_dev_close(uint16_t port_id)
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
 	dev = &rte_eth_devices[port_id];
 
-	if (dev->data->dev_started) {
+	/*
+	 * Secondary process needs to close device to release process private
+	 * resources. But secondary process should not be obliged to wait
+	 * for device stop before closing ethdev.
+	 */
+	if (rte_eal_process_type() == RTE_PROC_PRIMARY &&
+			dev->data->dev_started) {
 		RTE_ETHDEV_LOG(ERR, "Cannot close started device (port %u)\n",
 			       port_id);
 		return -EINVAL;
@@ -2967,21 +2975,16 @@ rte_eth_xstats_get(uint16_t port_id, struct rte_eth_xstat *xstats,
 	unsigned int n)
 {
 	struct rte_eth_dev *dev;
-	unsigned int count = 0, i;
+	unsigned int count, i;
 	signed int xcount = 0;
-	uint16_t nb_rxqs, nb_txqs;
 	int ret;
 
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	if (xstats == NULL && n > 0)
+		return -EINVAL;
 	dev = &rte_eth_devices[port_id];
 
-	nb_rxqs = RTE_MIN(dev->data->nb_rx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
-	nb_txqs = RTE_MIN(dev->data->nb_tx_queues, RTE_ETHDEV_QUEUE_STAT_CNTRS);
-
-	/* Return generic statistics */
-	count = RTE_NB_STATS;
-	if (dev->data->dev_flags & RTE_ETH_DEV_AUTOFILL_QUEUE_XSTATS)
-		count += (nb_rxqs * RTE_NB_RXQ_STATS) + (nb_txqs * RTE_NB_TXQ_STATS);
+	count = eth_dev_get_xstats_basic_count(dev);
 
 	/* implemented by the driver */
 	if (dev->dev_ops->xstats_get != NULL) {
@@ -2989,7 +2992,7 @@ rte_eth_xstats_get(uint16_t port_id, struct rte_eth_xstat *xstats,
 		 * xstats struct.
 		 */
 		xcount = (*dev->dev_ops->xstats_get)(dev,
-				     xstats ? xstats + count : NULL,
+				     (n > count) ? xstats + count : NULL,
 				     (n > count) ? n - count : 0);
 
 		if (xcount < 0)
@@ -5507,6 +5510,8 @@ eth_dev_add_port_queue_stats(struct rte_tel_data *d, uint64_t *q_stats,
 {
 	int q;
 	struct rte_tel_data *q_data = rte_tel_data_alloc();
+	if (q_data == NULL)
+		return;
 	rte_tel_data_start_array(q_data, RTE_TEL_U64_VAL);
 	for (q = 0; q < RTE_ETHDEV_QUEUE_STAT_CNTRS; q++)
 		rte_tel_data_add_array_u64(q_data, q_stats[q]);
@@ -5600,6 +5605,7 @@ eth_dev_handle_port_xstats(const char *cmd __rte_unused,
 	for (i = 0; i < num_xstats; i++)
 		rte_tel_data_add_dict_u64(d, xstat_names[i].name,
 				eth_xstats[i].value);
+	free(eth_xstats);
 	return 0;
 }
 
@@ -5891,4 +5897,6 @@ RTE_INIT(ethdev_init_telemetry)
 			"Returns the link status for a port. Parameters: int port_id");
 	rte_telemetry_register_cmd("/ethdev/info", eth_dev_handle_port_info,
 			"Returns the device info for a port. Parameters: int port_id");
+	rte_telemetry_register_cmd("/ethdev/module_eeprom", eth_dev_handle_port_module_eeprom,
+			"Returns module EEPROM info with SFF specs. Parameters: int port_id");
 }

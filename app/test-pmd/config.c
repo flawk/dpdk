@@ -1905,6 +1905,37 @@ port_action_handle_destroy(portid_t port_id,
 	return ret;
 }
 
+int
+port_action_handle_flush(portid_t port_id)
+{
+	struct rte_port *port;
+	struct port_indirect_action **tmp;
+	int ret = 0;
+
+	if (port_id_is_invalid(port_id, ENABLED_WARN) ||
+	    port_id == (portid_t)RTE_PORT_ALL)
+		return -EINVAL;
+	port = &ports[port_id];
+	tmp = &port->actions_list;
+	while (*tmp != NULL) {
+		struct rte_flow_error error;
+		struct port_indirect_action *pia = *tmp;
+
+		/* Poisoning to make sure PMDs update it in case of error. */
+		memset(&error, 0x44, sizeof(error));
+		if (pia->handle != NULL &&
+		    rte_flow_action_handle_destroy
+					(port_id, pia->handle, &error) != 0) {
+			printf("Indirect action #%u not destroyed\n", pia->id);
+			ret = port_flow_complain(&error);
+			tmp = &pia->next;
+		} else {
+			*tmp = pia->next;
+			free(pia);
+		}
+	}
+	return ret;
+}
 
 /** Get indirect action by port + id */
 struct rte_flow_action_handle *
@@ -3612,8 +3643,8 @@ rxtx_config_display(void)
 	       nb_fwd_lcores, nb_fwd_ports);
 
 	RTE_ETH_FOREACH_DEV(pid) {
-		struct rte_eth_rxconf *rx_conf = &ports[pid].rx_conf[0];
-		struct rte_eth_txconf *tx_conf = &ports[pid].tx_conf[0];
+		struct rte_eth_rxconf *rx_conf = &ports[pid].rxq[0].conf;
+		struct rte_eth_txconf *tx_conf = &ports[pid].txq[0].conf;
 		uint16_t *nb_rx_desc = &ports[pid].nb_rx_desc[0];
 		uint16_t *nb_tx_desc = &ports[pid].nb_tx_desc[0];
 		struct rte_eth_rxq_info rx_qinfo;
@@ -3871,7 +3902,7 @@ fwd_stream_on_other_lcores(uint16_t domain_id, lcoreid_t src_lc,
 			fs = fwd_streams[sm_id];
 			port = &ports[fs->rx_port];
 			dev_info = &port->dev_info;
-			rxq_conf = &port->rx_conf[fs->rx_queue];
+			rxq_conf = &port->rxq[fs->rx_queue].conf;
 			if ((dev_info->dev_capa & RTE_ETH_DEV_CAPA_RXQ_SHARE)
 			    == 0 || rxq_conf->share_group == 0)
 				/* Not shared rxq. */
@@ -3931,7 +3962,7 @@ pkt_fwd_shared_rxq_check(void)
 			fs->lcore = fwd_lcores[lc_id];
 			port = &ports[fs->rx_port];
 			dev_info = &port->dev_info;
-			rxq_conf = &port->rx_conf[fs->rx_queue];
+			rxq_conf = &port->rxq[fs->rx_queue].conf;
 			if ((dev_info->dev_capa & RTE_ETH_DEV_CAPA_RXQ_SHARE)
 			    == 0 || rxq_conf->share_group == 0)
 				/* Not shared rxq. */
