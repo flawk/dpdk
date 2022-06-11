@@ -5989,6 +5989,15 @@ set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate, uint64_t q_msk)
 	return diag;
 }
 
+int
+set_rxq_avail_thresh(portid_t port_id, uint16_t queue_id, uint8_t avail_thresh)
+{
+	if (port_id_is_invalid(port_id, ENABLED_WARN))
+		return -EINVAL;
+
+	return rte_eth_rx_avail_thresh_set(port_id, queue_id, avail_thresh);
+}
+
 /*
  * Functions to manage the set of filtered Multicast MAC addresses.
  *
@@ -6068,6 +6077,25 @@ mcast_addr_pool_remove(struct rte_port *port, uint32_t addr_idx)
 	memmove(&port->mc_addr_pool[addr_idx],
 		&port->mc_addr_pool[addr_idx + 1],
 		sizeof(struct rte_ether_addr) * (port->mc_addr_nb - addr_idx));
+}
+
+int
+mcast_addr_pool_destroy(portid_t port_id)
+{
+	struct rte_port *port;
+
+	if (port_id_is_invalid(port_id, ENABLED_WARN) ||
+	    port_id == (portid_t)RTE_PORT_ALL)
+		return -EINVAL;
+	port = &ports[port_id];
+
+	if (port->mc_addr_nb != 0) {
+		/* free the pool of multicast addresses. */
+		free(port->mc_addr_pool);
+		port->mc_addr_pool = NULL;
+		port->mc_addr_nb = 0;
+	}
+	return 0;
 }
 
 static int

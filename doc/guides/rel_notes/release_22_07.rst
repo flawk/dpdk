@@ -55,6 +55,15 @@ New Features
      Also, make sure to start the actual text at the margin.
      =======================================================
 
+* **Added initial RISC-V architecture support.***
+
+  Added EAL implementation for RISC-V architecture.
+  The initial device the porting was tested on is
+  a HiFive Unmatched development board based on the SiFive Freedom U740 SoC.
+  In theory this implementation should work
+  with any ``rv64gc`` ISA compatible implementation
+  with MMU supporting a reasonable address space size (U740 uses sv39 MMU).
+
 * **Added Sequence Lock.**
 
   Added a new synchronization primitive: the sequence lock
@@ -69,6 +78,12 @@ New Features
   ``rte_mtr_meter_vlan_table_update()``
   and updated ``struct rte_mtr_params`` and ``struct rte_mtr_capabilities`` to
   support protocol based input color selection for meter.
+
+* **Added Rx queue available descriptors threshold and event.**
+
+  Added ethdev API and corresponding driver operations to set Rx queue
+  available descriptors threshold and query for queues with reached
+  threshold when a new event ``RTE_ETH_EVENT_RX_AVAIL_THRESH`` is received.
 
 * **Added telemetry for module EEPROM.**
 
@@ -92,6 +107,20 @@ New Features
 * **Added vhost API to get the device type of a vDPA device.**
 
   Added an API which can get the device type of vDPA device.
+
+* **Updated Amazon ena driver.**
+
+  The new driver version (v2.7.0) includes:
+
+  * Added fast mbuf free feature support.
+  * Added ``enable_llq`` device argument for controlling the PMD LLQ
+    (Low Latency Queue) mode.
+
+* **Updated Atomic Rules' Arkville PMD.**
+
+  * A firmware version update to Arkville 22.07 is required.
+  * Added support for Atomic Rules PCI device IDs ``0x101a, 0x101b, 0x101c``.
+  * Added PMD support for virtual functions and vfio_pci driver.
 
 * **Updated Intel iavf driver.**
 
@@ -180,6 +209,11 @@ New Features
   Added scalar implementation of ``rte_lpm_lookupx4``.
   This is a fall-back implementation for platforms that
   don't support vector operations.
+
+* **Merged l3fwd-acl into l3fwd example.**
+
+  Merged l3fwd-acl code into l3fwd as l3fwd-acl contains duplicate
+  and common functions to l3fwd.
 
 
 Removed Items

@@ -255,7 +255,7 @@ F: app/test/test_bitmap.c
 
 MCSlock
 M: Honnappa Nagarahalli <honnappa.nagarahalli@arm.com>
-F: lib/eal/include/generic/rte_mcslock.h
+F: lib/eal/include/rte_mcslock.h
 F: app/test/test_mcslock.c
 
 Sequence Lock
@@ -266,7 +266,7 @@ F: app/test/test_seqlock.c
 
 Ticketlock
 M: Joyce Kong <joyce.kong@arm.com>
-F: lib/eal/include/generic/rte_ticketlock.h
+F: lib/eal/include/rte_ticketlock.h
 F: app/test/test_ticketlock.c
 
 Pseudo-random Number Generation
@@ -302,6 +302,12 @@ F: lib/*/*_altivec*
 F: drivers/*/*/*_altivec.*
 F: app/*/*_altivec.*
 F: examples/*/*_altivec.*
+
+RISC-V
+M: Stanislaw Kardach <kda@semihalf.com>
+F: config/riscv/
+F: doc/guides/linux_gsg/cross_build_dpdk_for_riscv.rst
+F: lib/eal/riscv/
 
 Intel x86
 M: Bruce Richardson <bruce.richardson@intel.com>
@@ -1518,8 +1524,6 @@ F: lib/acl/
 F: doc/guides/prog_guide/packet_classif_access_ctrl.rst
 F: app/test-acl/
 F: app/test/test_acl.*
-F: examples/l3fwd-acl/
-F: doc/guides/sample_app_ug/l3_forward_access_ctrl.rst
 
 EFD
 M: Byron Marohn <byron.marohn@intel.com>

@@ -420,6 +420,7 @@ static const char * const eth_event_desc[] = {
 	[RTE_ETH_EVENT_NEW] = "device probed",
 	[RTE_ETH_EVENT_DESTROY] = "device released",
 	[RTE_ETH_EVENT_FLOW_AGED] = "flow aged",
+	[RTE_ETH_EVENT_RX_AVAIL_THRESH] = "RxQ available descriptors threshold reached",
 	[RTE_ETH_EVENT_MAX] = NULL,
 };
 
@@ -2671,7 +2672,7 @@ rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		 * Use last valid pool for the segments with number
 		 * exceeding the pool index.
 		 */
-		mp_n = (i > mbuf_data_size_n) ? mbuf_data_size_n - 1 : i;
+		mp_n = (i >= mbuf_data_size_n) ? mbuf_data_size_n - 1 : i;
 		mpx = mbuf_pool_find(socket_id, mp_n);
 		/* Handle zero as mbuf data buffer size. */
 		rx_seg->length = rx_pkt_seg_lengths[i] ?
@@ -3237,6 +3238,7 @@ close_port(portid_t pid)
 		}
 
 		if (is_proc_primary()) {
+			mcast_addr_pool_destroy(pi);
 			port_flow_flush(pi);
 			port_flex_item_flush(pi);
 			port_action_handle_flush(pi);
@@ -3671,6 +3673,21 @@ eth_event_callback(portid_t port_id, enum rte_eth_event_type type, void *param,
 		ports[port_id].port_status = RTE_PORT_CLOSED;
 		printf("Port %u is closed\n", port_id);
 		break;
+	case RTE_ETH_EVENT_RX_AVAIL_THRESH: {
+		uint16_t rxq_id;
+		int ret;
+
+		/* avail_thresh query API rewinds rxq_id, no need to check max RxQ num */
+		for (rxq_id = 0; ; rxq_id++) {
+			ret = rte_eth_rx_avail_thresh_query(port_id, &rxq_id,
+							    NULL);
+			if (ret <= 0)
+				break;
+			printf("Received avail_thresh event, port: %u, rxq_id: %u\n",
+			       port_id, rxq_id);
+		}
+		break;
+	}
 	default:
 		break;
 	}
