@@ -70,6 +70,11 @@ New Features
   (seqlock). A seqlock allows for low overhead, parallel reads. The
   DPDK seqlock uses a spinlock to serialize multiple writing threads.
 
+* ** Added function get random floating point number.**
+
+  Added the function ``rte_drand()`` to provide a pseudo-random
+  floating point number.
+
 * **Added protocol based input color selection for meter.**
 
   Added new functions ``rte_mtr_color_in_protocol_set()``,
@@ -152,6 +157,11 @@ New Features
   * Added support for MTU on Windows.
   * Added matching and RSS on IPsec ESP.
 
+* **Updated Netronome nfp driver.**
+
+  * Added support for NFP3800 NIC.
+  * Added support for firmware with NFDk.
+
 * **Updated VMware vmxnet3 networking driver.**
 
   * Added version 5 support.
@@ -166,11 +176,23 @@ New Features
 * **Updated Wangxun ngbe driver.**
 
   * Added support for yt8531s PHY.
+  * Added support for OEM subsystem vendor ID.
+  * Added autoneg on/off for external PHY SFI mode.
+  * Added support for yt8521s/yt8531s PHY SGMII to RGMII mode.
+
+* **Updated Wangxun txgbe driver.**
+
+  * Added support for OEM subsystem vendor ID.
 
 * **Added Elliptic Curve Diffie-Hellman (ECDH) algorithm in cryptodev.**
 
   Added support for Elliptic Curve Diffie Hellman (ECDH) asymmetric
   algorithm in cryptodev.
+
+* **Updated OpenSSL crypto driver with 3.0 EVP API.**
+
+  Updated OpenSSL driver to support OpenSSL v3.0 EVP API.
+  Backward compatibility with OpenSSL v1.1.1 is also maintained.
 
 * **Updated Marvell cnxk crypto driver.**
 
@@ -180,6 +202,10 @@ New Features
 * **Updated Intel QuickAssist Technology (QAT) crypto PMD.**
 
   * Added support for secp384r1 elliptic curve.
+
+* **Added Intel ACC101 baseband PMD.**
+
+  Added a new baseband PMD for Intel ACC101 device.
 
 * **Added eventdev API to quiesce an event port.**
 

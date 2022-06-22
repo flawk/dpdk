@@ -3,8 +3,6 @@
  * Copyright 2020 NXP
  */
 
-#ifndef RTE_EXEC_ENV_WINDOWS
-
 #include <time.h>
 
 #include <rte_common.h>
@@ -6035,7 +6033,7 @@ test_zuc_encryption(const struct wireless_test_data *tdata)
 	retval = create_wireless_algo_cipher_operation(tdata->cipher_iv.data,
 					tdata->cipher_iv.len,
 					tdata->plaintext.len,
-					0);
+					tdata->validCipherOffsetInBits.len);
 	if (retval < 0)
 		return retval;
 
@@ -6130,7 +6128,7 @@ test_zuc_encryption_sgl(const struct wireless_test_data *tdata)
 	/* Create ZUC operation */
 	retval = create_wireless_algo_cipher_operation(tdata->cipher_iv.data,
 			tdata->cipher_iv.len, tdata->plaintext.len,
-			0);
+			tdata->validCipherOffsetInBits.len);
 	if (retval < 0)
 		return retval;
 
@@ -10057,6 +10055,9 @@ test_ipsec_pkt_replay(const void *test_data, const uint64_t esn[],
 	struct ipsec_test_data td_inb[IPSEC_TEST_PACKETS_MAX];
 	struct ipsec_test_flags flags;
 	uint32_t i = 0, ret = 0;
+
+	if (nb_pkts == 0)
+		return TEST_FAILED;
 
 	memset(&flags, 0, sizeof(flags));
 	flags.antireplay = true;
@@ -16654,5 +16655,3 @@ REGISTER_TEST_COMMAND(cryptodev_nitrox_autotest, test_cryptodev_nitrox);
 REGISTER_TEST_COMMAND(cryptodev_bcmfs_autotest, test_cryptodev_bcmfs);
 REGISTER_TEST_COMMAND(cryptodev_cn9k_autotest, test_cryptodev_cn9k);
 REGISTER_TEST_COMMAND(cryptodev_cn10k_autotest, test_cryptodev_cn10k);
-
-#endif /* !RTE_EXEC_ENV_WINDOWS */

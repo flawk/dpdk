@@ -38,6 +38,8 @@
 #define RTE_PORT_CLOSED         (uint16_t)2
 #define RTE_PORT_HANDLING       (uint16_t)3
 
+extern uint8_t cl_quit;
+
 /*
  * It is used to allocate the memory for hash key.
  * The hash key size is NIC dependent.
@@ -1144,8 +1146,6 @@ void port_dcb_info_display(portid_t port_id);
 uint8_t *open_file(const char *file_path, uint32_t *size);
 int save_file(const char *file_path, uint8_t *buf, uint32_t size);
 int close_file(uint8_t *buf);
-
-void port_queue_region_info_display(portid_t port_id, void *buf);
 
 enum print_warning {
 	ENABLED_WARN = 0,

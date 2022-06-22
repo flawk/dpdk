@@ -56,6 +56,7 @@ cn10k_sso_init_hws_mem(void *arg, uint8_t port_id)
 	ws->hws_id = port_id;
 	ws->swtag_req = 0;
 	ws->gw_wdata = cn10k_sso_gw_mode_wdata(dev);
+	ws->gw_rdata = SSO_TT_EMPTY << 32;
 	ws->lmt_base = dev->sso.lmt_base;
 
 	return ws;
@@ -943,6 +944,9 @@ static struct eventdev_ops cn10k_sso_dev_ops = {
 	.eth_tx_adapter_caps_get = cn10k_sso_tx_adapter_caps_get,
 	.eth_tx_adapter_queue_add = cn10k_sso_tx_adapter_queue_add,
 	.eth_tx_adapter_queue_del = cn10k_sso_tx_adapter_queue_del,
+	.eth_tx_adapter_start = cnxk_sso_tx_adapter_start,
+	.eth_tx_adapter_stop = cnxk_sso_tx_adapter_stop,
+	.eth_tx_adapter_free = cnxk_sso_tx_adapter_free,
 
 	.timer_adapter_caps_get = cnxk_tim_caps_get,
 
