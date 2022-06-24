@@ -38,6 +38,8 @@ Features
 - Multiple TX and RX queues.
 - Shared Rx queue.
 - Rx queue delay drop.
+- Rx queue available descriptor threshold event.
+- Host shaper support.
 - Support steering for external Rx queue created outside the PMD.
 - Support for scattered TX frames.
 - Advanced support for scattered Rx frames with tunable buffer attributes.
@@ -82,6 +84,7 @@ Features
 - Matching on GTP extension header with raw encap/decap action.
 - Matching on Geneve TLV option header with raw encap/decap action.
 - Matching on ESP header SPI field.
+- Modify IPv4/IPv6 ECN field.
 - RSS support in sample action.
 - E-Switch mirroring and jump.
 - E-Switch mirroring and modify.
@@ -93,6 +96,7 @@ Features
 - Connection tracking.
 - Sub-Function representors.
 - Sub-Function.
+- Matching on represented port.
 
 
 Limitations
@@ -129,6 +133,16 @@ Limitations
 
   - Counters of received packets and bytes number of devices in same share group are same.
   - Counters of received packets and bytes number of queues in same group and queue ID are same.
+
+- Available descriptor threshold event:
+
+  - Does not support shared Rx queue and hairpin Rx queue.
+
+- Host shaper:
+
+  - Support BlueField series NIC from BlueField 2.
+  - When configuring host shaper with MLX5_HOST_SHAPER_FLAG_AVAIL_THRESH_TRIGGERED flag set,
+    only rates 0 and 100Mbps are supported.
 
 - When using Verbs flow engine (``dv_flow_en`` = 0), flow pattern without any
   specific VLAN will match for VLAN packets as well:
@@ -344,6 +358,12 @@ Limitations
   - can be applied to VF ports only.
   - must specify PF port action (packet redirection from VF to PF).
 
+- E-Switch Manager matching:
+
+  - For Bluefield with old FW
+    which doesn't expose the E-Switch Manager vport ID in the capability,
+    matching E-Switch Manager should be used only in Bluefield embedded CPU mode.
+
 - Raw encapsulation:
 
   - The input buffer, used as outer header, is not validated.
@@ -444,8 +464,8 @@ Limitations
      - yellow: NULL or END.
      - RED: DROP / END.
   - The only supported meter policy actions:
-     - green: QUEUE, RSS, PORT_ID, REPRESENTED_PORT, JUMP, DROP, MARK, METER and SET_TAG.
-     - yellow: QUEUE, RSS, PORT_ID, REPRESENTED_PORT, JUMP, DROP, MARK, METER and SET_TAG.
+     - green: QUEUE, RSS, PORT_ID, REPRESENTED_PORT, JUMP, DROP, MODIFY_FIELD, MARK, METER and SET_TAG.
+     - yellow: QUEUE, RSS, PORT_ID, REPRESENTED_PORT, JUMP, DROP, MODIFY_FIELD, MARK, METER and SET_TAG.
      - RED: must be DROP.
   - Policy actions of RSS for green and yellow should have the same configuration except queues.
   - Policy with RSS/queue action is not supported when ``dv_xmeta_en`` enabled.
@@ -456,7 +476,7 @@ Limitations
 
 - Integrity:
 
-  - Integrity offload is enabled for **ConnectX-6** family.
+  - Integrity offload is enabled starting from **ConnectX-6 Dx**.
   - Verification bits provided by the hardware are ``l3_ok``, ``ipv4_csum_ok``, ``l4_ok``, ``l4_csum_ok``.
   - ``level`` value 0 references outer headers.
   - Multiple integrity items not supported in a single flow rule.
@@ -1680,3 +1700,96 @@ The procedure below is an example of using a ConnectX-5 adapter card (pf0) with 
 #. For each VF PCIe, using the following command to bind the driver::
 
    $ echo "0000:82:00.2" >> /sys/bus/pci/drivers/mlx5_core/bind
+
+Host shaper
+-----------
+
+Host shaper register is per host port register
+which sets a shaper on the host port.
+All VF/host PF representors belonging to one host port share one host shaper.
+For example, if representor 0 and representor 1 belong to the same host port,
+and a host shaper rate of 1Gbps is configured,
+the shaper throttles both representors traffic from the host.
+
+Host shaper has two modes for setting the shaper,
+immediate and deferred to available descriptor threshold event trigger.
+
+In immediate mode, the rate limit is configured immediately to host shaper.
+
+When deferring to the available descriptor threshold trigger,
+the shaper is not set until an available descriptor threshold event
+is received by any Rx queue in a VF representor belonging to the host port.
+The only rate supported for deferred mode is 100Mbps
+(there is no limit on the supported rates for immediate mode).
+In deferred mode, the shaper is set on the host port by the firmware
+upon receiving the available descriptor threshold event,
+which allows throttling host traffic on available descriptor threshold events
+at minimum latency, preventing excess drops in the Rx queue.
+
+Dependency on mstflint package
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In order to configure host shaper register,
+``librte_net_mlx5`` depends on ``libmtcr_ul``
+which can be installed from OFED mstflint package.
+Meson detects ``libmtcr_ul`` existence at configure stage.
+If the library is detected, the application must link with ``-lmtcr_ul``,
+as done by the pkg-config file libdpdk.pc.
+
+Available descriptor threshold and host shaper
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+There is a command to configure the available descriptor threshold in testpmd.
+Testpmd also contains sample logic to handle available descriptor threshold events.
+The typical workflow is:
+testpmd configures available descriptor threshold for Rx queues,
+enables ``avail_thresh_triggered`` in host shaper and registers a callback.
+When traffic from the host is too high
+and Rx queue emptiness is below the available descriptor threshold,
+the PMD receives an event
+and the firmware configures a 100Mbps shaper on the host port automatically.
+Then the PMD call the callback registered previously,
+which will delay a while to let Rx queue empty,
+then disable host shaper.
+
+Let's assume we have a simple BlueField 2 setup:
+port 0 is uplink, port 1 is VF representor.
+Each port has 2 Rx queues.
+To control traffic from the host to the Arm device,
+we can enable the available descriptor threshold in testpmd by:
+
+.. code-block:: console
+
+   testpmd> mlx5 set port 1 host_shaper avail_thresh_triggered 1 rate 0
+   testpmd> set port 1 rxq 0 avail_thresh 70
+   testpmd> set port 1 rxq 1 avail_thresh 70
+
+The first command disables the current host shaper
+and enables the available descriptor threshold triggered mode.
+The other commands configure the available descriptor threshold
+to 70% of Rx queue size for both Rx queues.
+
+When traffic from the host is too high,
+testpmd console prints log about available descriptor threshold event,
+then host shaper is disabled.
+The traffic rate from the host is controlled and less drop happens in Rx queues.
+
+The threshold event and shaper can be disabled like this:
+
+.. code-block:: console
+
+   testpmd> mlx5 set port 1 host_shaper avail_thresh_triggered 0 rate 0
+   testpmd> set port 1 rxq 0 avail_thresh 0
+   testpmd> set port 1 rxq 1 avail_thresh 0
+
+It is recommended an application disables the available descriptor threshold
+and ``avail_thresh_triggered`` before exit,
+if it enables them before.
+
+The shaper can also be configured with a value, the rate unit is 100Mbps.
+Below, the command sets the current shaper to 5Gbps
+and disables ``avail_thresh_triggered``.
+
+.. code-block:: console
+
+   testpmd> mlx5 set port 1 host_shaper avail_thresh_triggered 0 rate 50

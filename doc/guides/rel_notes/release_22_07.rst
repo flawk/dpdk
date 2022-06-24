@@ -109,9 +109,21 @@ New Features
   Added vhost async dequeue API which can leverage DMA devices to
   accelerate receiving packets from guest.
 
+* **Added thread-safe version of in-flight packet clear API in vhost library.**
+
+  Added an API which can clear the in-flight packets submitted to
+  the async channel in a thread-safe manner in the vhost async data path.
+
 * **Added vhost API to get the device type of a vDPA device.**
 
   Added an API which can get the device type of vDPA device.
+
+* **Updated NVIDIA mlx5 vDPA driver.**
+
+  * Added new devargs options ``queue_size`` and ``queues``
+    to allow prior creation of virtq resources.
+  * Added new devargs option ``max_conf_threads``
+    defining the number of management threads for parallel configurations.
 
 * **Updated Amazon ena driver.**
 
@@ -156,6 +168,10 @@ New Features
   * Added support for promiscuous mode on Windows.
   * Added support for MTU on Windows.
   * Added matching and RSS on IPsec ESP.
+  * Added matching on represented port.
+  * Added support for modifying ECN field of IPv4/IPv6.
+  * Added Rx queue available descriptor threshold support.
+  * Added host shaper support.
 
 * **Updated Netronome nfp driver.**
 

@@ -78,6 +78,18 @@ for an additional list of options shared with other mlx5 drivers.
   CPU core number to set polling thread affinity to, default to control plane
   cpu.
 
+- ``max_conf_threads`` parameter [int]
+
+  Allow the driver to use internal threads to obtain fast configuration.
+  All the threads will be open on the same core of the event completion queue scheduling thread.
+
+  - 0, default, don't use internal threads for configuration.
+
+  - 1 - 256, number of internal threads in addition to the caller thread (8 is suggested).
+    This value, if not 0, should be the same for all the devices;
+    the first probing will take it with the ``event_core``
+    for all the multi-thread configurations in the driver.
+
 - ``hw_latency_mode`` parameter [int]
 
   The completion queue moderation mode:
@@ -101,6 +113,20 @@ for an additional list of options shared with other mlx5 drivers.
 
   - 0, HW default.
 
+- ``queue_size`` parameter [int]
+
+  - 1 - 1024, Virtio queue depth for pre-creating queue resource to speed up
+    first time queue creation. Set it together with ``queues`` parameter.
+
+  - 0, default value, no pre-create virtq resource.
+
+- ``queues`` parameter [int]
+
+  - 1 - 128, Maximum number of virtio queue pair (including 1 Rx queue and 1 Tx queue)
+    for pre-creating queue resource to speed up first time queue creation.
+    Set it together with ``queue_size`` parameter.
+
+  - 0, default value, no pre-create virtq resource.
 
 Error handling
 ^^^^^^^^^^^^^^
