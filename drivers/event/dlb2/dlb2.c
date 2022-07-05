@@ -170,10 +170,11 @@ dlb2_init_port_cos(struct dlb2_eventdev *dlb2, int *port_cos)
 {
 	int q;
 
-	for (q = 0; q < DLB2_MAX_NUM_PORTS_ALL; q++) {
-		dlb2->ev_ports[q].cos_id = port_cos[q];
-		dlb2->cos_ports[port_cos[q]]++;
-	}
+	for (q = 0; q < DLB2_MAX_NUM_PORTS_ALL; q++)
+		if (port_cos[q] != DLB2_COS_DEFAULT) {
+			dlb2->ev_ports[q].cos_id = port_cos[q];
+			dlb2->cos_ports[port_cos[q]]++;
+		}
 }
 
 static void
@@ -181,6 +182,17 @@ dlb2_init_cos_bw(struct dlb2_eventdev *dlb2,
 		 struct dlb2_cos_bw *cos_bw)
 {
 	int q;
+
+
+	/* If cos_bw not set, then split evenly */
+	if (cos_bw->val[0] == 0 && cos_bw->val[1] == 0 &&
+		cos_bw->val[2] == 0 && cos_bw->val[3] == 0) {
+		cos_bw->val[0] = 25;
+		cos_bw->val[1] = 25;
+		cos_bw->val[2] = 25;
+		cos_bw->val[3] = 25;
+	}
+
 	for (q = 0; q < DLB2_COS_NUM_VALS; q++)
 		dlb2->cos_bw[q] = cos_bw->val[q];
 
@@ -327,6 +339,36 @@ set_max_cq_depth(const char *key __rte_unused,
 }
 
 static int
+set_max_enq_depth(const char *key __rte_unused,
+		  const char *value,
+		  void *opaque)
+{
+	int *max_enq_depth = opaque;
+	int ret;
+
+	if (value == NULL || opaque == NULL) {
+		DLB2_LOG_ERR("NULL pointer\n");
+		return -EINVAL;
+	}
+
+	ret = dlb2_string_to_int(max_enq_depth, value);
+	if (ret < 0)
+		return ret;
+
+	if (*max_enq_depth < DLB2_MIN_ENQ_DEPTH_OVERRIDE ||
+	    *max_enq_depth > DLB2_MAX_ENQ_DEPTH_OVERRIDE ||
+	    !rte_is_power_of_2(*max_enq_depth)) {
+		DLB2_LOG_ERR("dlb2: max_enq_depth %d and %d and a power of 2\n",
+		DLB2_MIN_ENQ_DEPTH_OVERRIDE,
+		DLB2_MAX_ENQ_DEPTH_OVERRIDE);
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+static int
 set_max_num_events(const char *key __rte_unused,
 		   const char *value,
 		   void *opaque)
@@ -434,19 +476,15 @@ set_port_cos(const char *key __rte_unused,
 	}
 
 	/* command line override may take one of the following 3 forms:
-	 * port_cos=all:<cos_id> ... all ports
 	 * port_cos=port-port:<cos_id> ... a range of ports
 	 * port_cos=port:<cos_id> ... just one port
 	 */
-	if (sscanf(value, "all:%d", &cos_id) == 1) {
-		first = 0;
-		last = DLB2_MAX_NUM_LDB_PORTS - 1;
-	} else if (sscanf(value, "%d-%d:%d", &first, &last, &cos_id) == 3) {
+	if (sscanf(value, "%d-%d:%d", &first, &last, &cos_id) == 3) {
 		/* we have everything we need */
 	} else if (sscanf(value, "%d:%d", &first, &cos_id) == 2) {
 		last = first;
 	} else {
-		DLB2_LOG_ERR("Error parsing ldb port port_cos devarg. Should be all:val, port-port:val, or port:val\n");
+		DLB2_LOG_ERR("Error parsing ldb port port_cos devarg. Should be port-port:val, or port:val\n");
 		return -EINVAL;
 	}
 
@@ -481,13 +519,13 @@ set_cos_bw(const char *key __rte_unused,
 
 	/* format must be %d,%d,%d,%d */
 
-	if (sscanf(value, "%d,%d,%d,%d", &cos_bw->val[0], &cos_bw->val[1],
+	if (sscanf(value, "%d:%d:%d:%d", &cos_bw->val[0], &cos_bw->val[1],
 		   &cos_bw->val[2], &cos_bw->val[3]) != 4) {
-		DLB2_LOG_ERR("Error parsing cos bandwidth devarg. Should be bw0,bw1,bw2,bw3 where all values combined are <= 100\n");
+		DLB2_LOG_ERR("Error parsing cos bandwidth devarg. Should be bw0:bw1:bw2:bw3 where all values combined are <= 100\n");
 		return -EINVAL;
 	}
 	if (cos_bw->val[0] + cos_bw->val[1] + cos_bw->val[2] + cos_bw->val[3] > 100) {
-		DLB2_LOG_ERR("Error parsing cos bandwidth devarg. Should be bw0,bw1,bw2,bw3  where all values combined are <= 100\n");
+		DLB2_LOG_ERR("Error parsing cos bandwidth devarg. Should be bw0:bw1:bw2:bw3  where all values combined are <= 100\n");
 		return -EINVAL;
 	}
 
@@ -751,9 +789,9 @@ dlb2_hw_create_sched_domain(struct dlb2_eventdev *dlb2,
 
 	/* LDB ports */
 
-	/* tally of ports with non default COS */
-	cos_ports = dlb2->cos_ports[1] + dlb2->cos_ports[2] +
-		    dlb2->cos_ports[3];
+	/* tally of COS ports from cmd line */
+	cos_ports = dlb2->cos_ports[0] + dlb2->cos_ports[1] +
+		    dlb2->cos_ports[2] + dlb2->cos_ports[3];
 
 	if (cos_ports > resources_asked->num_ldb_ports) {
 		DLB2_LOG_ERR("dlb2: num_ldb_ports < nonzero cos_ports\n");
@@ -4505,7 +4543,34 @@ dlb2_primary_eventdev_probe(struct rte_eventdev *dev,
 	dlb2->hw_credit_quanta = dlb2_args->hw_credit_quanta;
 	dlb2->default_depth_thresh = dlb2_args->default_depth_thresh;
 	dlb2->vector_opts_enabled = dlb2_args->vector_opts_enabled;
-	dlb2->max_cq_depth = dlb2_args->max_cq_depth;
+
+
+	if (dlb2_args->max_cq_depth != 0)
+		dlb2->max_cq_depth = dlb2_args->max_cq_depth;
+	else
+		dlb2->max_cq_depth = DLB2_DEFAULT_CQ_DEPTH;
+
+	evdev_dlb2_default_info.max_event_port_dequeue_depth = dlb2->max_cq_depth;
+
+	if (dlb2_args->max_enq_depth != 0)
+		dlb2->max_enq_depth = dlb2_args->max_enq_depth;
+	else
+		dlb2->max_enq_depth = DLB2_DEFAULT_CQ_DEPTH;
+
+	evdev_dlb2_default_info.max_event_port_enqueue_depth =
+		dlb2->max_enq_depth;
+
+	dlb2_init_queue_depth_thresholds(dlb2,
+					 dlb2_args->qid_depth_thresholds.val);
+
+	dlb2_init_cq_weight(dlb2,
+			    dlb2_args->cq_weight.limit);
+
+	dlb2_init_port_cos(dlb2,
+			   dlb2_args->port_cos.cos_id);
+
+	dlb2_init_cos_bw(dlb2,
+			 &dlb2_args->cos_bw);
 
 	err = dlb2_iface_open(&dlb2->qm_instance, name);
 	if (err < 0) {
@@ -4540,7 +4605,7 @@ dlb2_primary_eventdev_probe(struct rte_eventdev *dev,
 
 		for (id = 0; id < DLB2_COS_NUM_VALS; id++) {
 			set_cos_bw_args.cos_id = id;
-			set_cos_bw_args.cos_id = dlb2->cos_bw[id];
+			set_cos_bw_args.bandwidth = dlb2->cos_bw[id];
 			ret = dlb2_iface_set_cos_bw(&dlb2->qm_instance,
 						    &set_cos_bw_args);
 			if (ret != 0)
@@ -4576,18 +4641,6 @@ dlb2_primary_eventdev_probe(struct rte_eventdev *dev,
 	dlb2_iface_low_level_io_init();
 
 	dlb2_entry_points_init(dev);
-
-	dlb2_init_queue_depth_thresholds(dlb2,
-					 dlb2_args->qid_depth_thresholds.val);
-
-	dlb2_init_cq_weight(dlb2,
-			    dlb2_args->cq_weight.limit);
-
-	dlb2_init_port_cos(dlb2,
-			   dlb2_args->port_cos.cos_id);
-
-	dlb2_init_cos_bw(dlb2,
-			 &dlb2_args->cos_bw);
 
 	return 0;
 }
@@ -4643,6 +4696,7 @@ dlb2_parse_params(const char *params,
 					     DLB2_DEPTH_THRESH_ARG,
 					     DLB2_VECTOR_OPTS_ENAB_ARG,
 					     DLB2_MAX_CQ_DEPTH,
+					     DLB2_MAX_ENQ_DEPTH,
 					     DLB2_CQ_WEIGHT,
 					     DLB2_PORT_COS,
 					     DLB2_COS_BW,
@@ -4777,6 +4831,17 @@ dlb2_parse_params(const char *params,
 					&dlb2_args->max_cq_depth);
 			if (ret != 0) {
 				DLB2_LOG_ERR("%s: Error parsing max cq depth",
+					     name);
+				rte_kvargs_free(kvlist);
+				return ret;
+			}
+
+			ret = rte_kvargs_process(kvlist,
+						 DLB2_MAX_ENQ_DEPTH,
+						 set_max_enq_depth,
+						 &dlb2_args->max_enq_depth);
+			if (ret != 0) {
+				DLB2_LOG_ERR("%s: Error parsing vector opts enabled",
 					     name);
 				rte_kvargs_free(kvlist);
 				return ret;

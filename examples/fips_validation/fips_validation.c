@@ -463,7 +463,11 @@ fips_test_parse_one_json_vector_set(void)
 	else if (strstr(algo_str, "CMAC"))
 		info.algo = FIPS_TEST_ALGO_AES_CMAC;
 	else if (strstr(algo_str, "AES-CBC"))
-		info.algo = FIPS_TEST_ALGO_AES;
+		info.algo = FIPS_TEST_ALGO_AES_CBC;
+	else if (strstr(algo_str, "AES-XTS"))
+		info.algo = FIPS_TEST_ALGO_AES_XTS;
+	else if (strstr(algo_str, "SHA"))
+		info.algo = FIPS_TEST_ALGO_SHA;
 	else
 		return -EINVAL;
 
@@ -630,7 +634,7 @@ parse_uint8_hex_str(const char *key, char *src, struct fips_val *val)
 		val->val = NULL;
 	}
 
-	val->val = rte_zmalloc(NULL, len, 0);
+	val->val = rte_zmalloc(NULL, len + 1, 0);
 	if (!val->val)
 		return -ENOMEM;
 
