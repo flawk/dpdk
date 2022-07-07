@@ -634,9 +634,8 @@ us_vhost_usage(const char *prgname)
 {
 	RTE_LOG(INFO, VHOST_CONFIG, "%s [EAL options] -- -p PORTMASK\n"
 	"		--vm2vm [0|1|2]\n"
-	"		--rx_retry [0|1] --mergeable [0|1] --stats [0-N]\n"
+	"		--rx-retry [0|1] --mergeable [0|1] --stats [0-N]\n"
 	"		--socket-file <path>\n"
-	"		--nb-devices ND\n"
 	"		-p PORTMASK: Set mask for ports to be used by application\n"
 	"		--vm2vm [0|1|2]: disable/software(default)/hardware vm2vm comms\n"
 	"		--rx-retry [0|1]: disable/enable(default) retries on Rx. Enable retry if destination queue is full\n"
@@ -645,11 +644,12 @@ us_vhost_usage(const char *prgname)
 	"		--mergeable [0|1]: disable(default)/enable RX mergeable buffers\n"
 	"		--stats [0-N]: 0: Disable stats, N: Time in seconds to print stats\n"
 	"		--socket-file: The path of the socket file.\n"
-	"		--tx-csum [0|1] disable/enable TX checksum offload.\n"
-	"		--tso [0|1] disable/enable TCP segment offload.\n"
-	"		--client register a vhost-user socket as client mode.\n"
-	"		--dmas register dma channel for specific vhost device.\n"
-	"		--total-num-mbufs [0-N] set the number of mbufs to be allocated in mbuf pools, the default value is 147456.\n",
+	"		--tx-csum [0|1]: disable/enable TX checksum offload.\n"
+	"		--tso [0|1]: disable/enable TCP segment offload.\n"
+	"		--client: register a vhost-user socket as client mode.\n"
+	"		--dmas: register dma channel for specific vhost device.\n"
+	"		--total-num-mbufs [0-N]: set the number of mbufs to be allocated in mbuf pools, the default value is 147456.\n"
+	"		--builtin-net-driver: enable simple vhost-user net driver\n",
 	       prgname);
 }
 
@@ -1383,26 +1383,20 @@ drain_eth_rx(struct vhost_dev *vdev)
 	if (!rx_count)
 		return;
 
-	/*
-	 * When "enable_retry" is set, here we wait and retry when there
-	 * is no enough free slots in the queue to hold @rx_count packets,
-	 * to diminish packet loss.
-	 */
-	if (enable_retry &&
-	    unlikely(rx_count > rte_vhost_avail_entries(vdev->vid,
-			VIRTIO_RXQ))) {
-		uint32_t retry;
+	enqueue_count = vdev_queue_ops[vdev->vid].enqueue_pkt_burst(vdev,
+						VIRTIO_RXQ, pkts, rx_count);
 
-		for (retry = 0; retry < burst_rx_retry_num; retry++) {
+	/* Retry if necessary */
+	if (enable_retry && unlikely(enqueue_count < rx_count)) {
+		uint32_t retry = 0;
+
+		while (enqueue_count < rx_count && retry++ < burst_rx_retry_num) {
 			rte_delay_us(burst_rx_delay_time);
-			if (rx_count <= rte_vhost_avail_entries(vdev->vid,
-					VIRTIO_RXQ))
-				break;
+			enqueue_count += vdev_queue_ops[vdev->vid].enqueue_pkt_burst(vdev,
+							VIRTIO_RXQ, &pkts[enqueue_count],
+							rx_count - enqueue_count);
 		}
 	}
-
-	enqueue_count = vdev_queue_ops[vdev->vid].enqueue_pkt_burst(vdev,
-					VIRTIO_RXQ, pkts, rx_count);
 
 	if (enable_stats) {
 		__atomic_add_fetch(&vdev->stats.rx_total_atomic, rx_count,

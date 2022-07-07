@@ -479,14 +479,15 @@ Limitations
   - Integrity offload is enabled starting from **ConnectX-6 Dx**.
   - Verification bits provided by the hardware are ``l3_ok``, ``ipv4_csum_ok``, ``l4_ok``, ``l4_csum_ok``.
   - ``level`` value 0 references outer headers.
+  - Negative integrity item verification is not supported.
   - Multiple integrity items not supported in a single flow rule.
   - Flow rule items supplied by application must explicitly specify network headers referred by integrity item.
     For example, if integrity item mask sets ``l4_ok`` or ``l4_csum_ok`` bits, reference to L4 network header,
     TCP or UDP, must be in the rule pattern as well::
 
       flow create 0 ingress pattern integrity level is 0 value mask l3_ok value spec l3_ok / eth / ipv6 / end …
-      or
-      flow create 0 ingress pattern integrity level is 0 value mask l4_ok value spec 0 / eth / ipv4 proto is udp / end …
+
+      flow create 0 ingress pattern integrity level is 0 value mask l4_ok value spec l4_ok / eth / ipv4 proto is udp / end …
 
 - Connection tracking:
 
@@ -1793,3 +1794,69 @@ and disables ``avail_thresh_triggered``.
 .. code-block:: console
 
    testpmd> mlx5 set port 1 host_shaper avail_thresh_triggered 0 rate 50
+
+
+Testpmd
+-------
+
+port attach with socket path
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It is possible to allocate a port with ``libibverbs`` from external application.
+For importing the external port with extra device arguments,
+there is a specific testpmd command
+similar to :ref:`port attach command <port_attach>`::
+
+   testpmd> mlx5 port attach (identifier) socket=(path)
+
+where:
+
+* ``identifier``: device identifier with optional parameters
+  as same as :ref:`port attach command <port_attach>`.
+* ``path``: path to IPC server socket created by the external application.
+
+This command performs:
+
+#. Open IPC client socket using the given path, and connect it.
+
+#. Import ibverbs context and ibverbs protection domain.
+
+#. Add two device arguments for context (``cmd_fd``)
+   and protection domain (``pd_handle``) to the device identifier.
+   See :ref:`mlx5 driver options <mlx5_common_driver_options>` for more
+   information about these device arguments.
+
+#. Call the regular ``port attach`` function with updated identifier.
+
+For example, to attach a port whose PCI address is ``0000:0a:00.0``
+and its socket path is ``/var/run/import_ipc_socket``:
+
+.. code-block:: console
+
+   testpmd> mlx5 port attach 0000:0a:00.0 socket=/var/run/import_ipc_socket
+   testpmd: MLX5 socket path is /var/run/import_ipc_socket
+   testpmd: Attach port with extra devargs 0000:0a:00.0,cmd_fd=40,pd_handle=1
+   Attaching a new port...
+   EAL: Probe PCI driver: mlx5_pci (15b3:101d) device: 0000:0a:00.0 (socket 0)
+   Port 0 is attached. Now total ports is 1
+   Done
+
+
+port map external Rx queue
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+External Rx queue indexes mapping management.
+
+Map HW queue index (32-bit) to ethdev queue index (16-bit) for external Rx queue::
+
+   testpmd> mlx5 port (port_id) ext_rxq map (sw_queue_id) (hw_queue_id)
+
+Unmap external Rx queue::
+
+   testpmd> mlx5 port (port_id) ext_rxq unmap (sw_queue_id)
+
+where:
+
+* ``sw_queue_id``: queue index in range [64536, 65535].
+  This range is the highest 1000 numbers.
+* ``hw_queue_id``: queue index given by HW in queue creation.
