@@ -137,7 +137,7 @@ set_cq_weight(const char *key __rte_unused,
 	 */
 	if (sscanf(value, "all:%d", &weight) == 1) {
 		first = 0;
-		last = DLB2_MAX_NUM_LDB_PORTS - 1;
+		last = DLB2_MAX_NUM_PORTS_ALL - 1;
 	} else if (sscanf(value, "%d-%d:%d", &first, &last, &weight) == 3) {
 		/* we have everything we need */
 	} else if (sscanf(value, "%d:%d", &first, &weight) == 2) {
@@ -148,7 +148,7 @@ set_cq_weight(const char *key __rte_unused,
 	}
 
 	if (first > last || first < 0 ||
-		last >= DLB2_MAX_NUM_LDB_PORTS) {
+		last >= DLB2_MAX_NUM_PORTS_ALL) {
 		DLB2_LOG_ERR("Error parsing ldb port qe weight arg, invalid port value\n");
 		return -EINVAL;
 	}
@@ -1527,8 +1527,8 @@ dlb2_hw_create_ldb_port(struct dlb2_eventdev *dlb2,
 
 	if (dlb2->version == DLB2_HW_V2 && ev_port->cq_weight != 0 &&
 	    ev_port->cq_weight > dequeue_depth) {
-		DLB2_LOG_ERR("dlb2: invalid cq depth, must be >= cq weight%d\n",
-			     DLB2_MIN_ENQUEUE_DEPTH);
+		DLB2_LOG_ERR("dlb2: invalid cq dequeue depth %d, must be >= cq weight %d\n",
+			     dequeue_depth, ev_port->cq_weight);
 		return -EINVAL;
 	}
 
