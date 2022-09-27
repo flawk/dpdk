@@ -535,110 +535,6 @@ Usage example, matching non-TCPv4 packets only:
    | 4     | END      |
    +-------+----------+
 
-Item: ``PF``
-^^^^^^^^^^^^
-
-This item is deprecated. Consider:
- - `Item: PORT_REPRESENTOR`_
- - `Item: REPRESENTED_PORT`_
-
-Matches traffic originating from (ingress) or going to (egress) the physical
-function of the current device.
-
-If supported, should work even if the physical function is not managed by
-the application and thus not associated with a DPDK port ID.
-
-- Can be combined with any number of `Item: VF`_ to match both PF and VF
-  traffic.
-- ``spec``, ``last`` and ``mask`` must not be set.
-
-.. _table_rte_flow_item_pf:
-
-.. table:: PF
-
-   +----------+-------+
-   | Field    | Value |
-   +==========+=======+
-   | ``spec`` | unset |
-   +----------+-------+
-   | ``last`` | unset |
-   +----------+-------+
-   | ``mask`` | unset |
-   +----------+-------+
-
-Item: ``VF``
-^^^^^^^^^^^^
-
-This item is deprecated. Consider:
- - `Item: PORT_REPRESENTOR`_
- - `Item: REPRESENTED_PORT`_
-
-Matches traffic originating from (ingress) or going to (egress) a given
-virtual function of the current device.
-
-If supported, should work even if the virtual function is not managed by the
-application and thus not associated with a DPDK port ID.
-
-Note this pattern item does not match VF representors traffic which, as
-separate entities, should be addressed through their own DPDK port IDs.
-
-- Can be specified multiple times to match traffic addressed to several VF
-  IDs.
-- Can be combined with a PF item to match both PF and VF traffic.
-- Default ``mask`` matches any VF ID.
-
-.. _table_rte_flow_item_vf:
-
-.. table:: VF
-
-   +----------+----------+---------------------------+
-   | Field    | Subfield | Value                     |
-   +==========+==========+===========================+
-   | ``spec`` | ``id``   | destination VF ID         |
-   +----------+----------+---------------------------+
-   | ``last`` | ``id``   | upper range value         |
-   +----------+----------+---------------------------+
-   | ``mask`` | ``id``   | zeroed to match any VF ID |
-   +----------+----------+---------------------------+
-
-Item: ``PHY_PORT``
-^^^^^^^^^^^^^^^^^^
-
-This item is deprecated. Consider:
- - `Item: PORT_REPRESENTOR`_
- - `Item: REPRESENTED_PORT`_
-
-Matches traffic originating from (ingress) or going to (egress) a physical
-port of the underlying device.
-
-The first PHY_PORT item overrides the physical port normally associated with
-the specified DPDK input port (port_id). This item can be provided several
-times to match additional physical ports.
-
-Note that physical ports are not necessarily tied to DPDK input ports
-(port_id) when those are not under DPDK control. Possible values are
-specific to each device, they are not necessarily indexed from zero and may
-not be contiguous.
-
-As a device property, the list of allowed values as well as the value
-associated with a port_id should be retrieved by other means.
-
-- Default ``mask`` matches any port index.
-
-.. _table_rte_flow_item_phy_port:
-
-.. table:: PHY_PORT
-
-   +----------+-----------+--------------------------------+
-   | Field    | Subfield  | Value                          |
-   +==========+===========+================================+
-   | ``spec`` | ``index`` | physical port index            |
-   +----------+-----------+--------------------------------+
-   | ``last`` | ``index`` | upper range value              |
-   +----------+-----------+--------------------------------+
-   | ``mask`` | ``index`` | zeroed to match any port index |
-   +----------+-----------+--------------------------------+
-
 Item: ``PORT_ID``
 ^^^^^^^^^^^^^^^^^
 
@@ -651,11 +547,6 @@ port ID.
 
 Normally only supported if the port ID in question is known by the
 underlying PMD and related to the device the flow rule is created against.
-
-This must not be confused with `Item: PHY_PORT`_ which refers to the
-physical port of a device, whereas `Item: PORT_ID`_ refers to a ``struct
-rte_eth_dev`` object on the application side (also known as "port
-representor" depending on the kind of underlying device).
 
 - Default ``mask`` matches the specified DPDK port ID.
 
@@ -2074,8 +1965,6 @@ This action is deprecated. Consider:
 Directs matching traffic to the physical function (PF) of the current
 device.
 
-See `Item: PF`_.
-
 - No configurable properties.
 
 .. _table_rte_flow_action_pf:
@@ -2097,12 +1986,10 @@ This action is deprecated. Consider:
 
 Directs matching traffic to a given virtual function of the current device.
 
-Packets matched by a VF pattern item can be redirected to their original VF
-ID instead of the specified one. This parameter may not be available and is
+Packets can be redirected to the VF they originate from,
+instead of the specified one. This parameter may not be available and is
 not guaranteed to work properly if the VF part is matched by a prior flow
 rule or if packets are not addressed to a VF in the first place.
-
-See `Item: VF`_.
 
 .. _table_rte_flow_action_vf:
 
@@ -2115,30 +2002,6 @@ See `Item: VF`_.
    +--------------+--------------------------------+
    | ``id``       | VF ID                          |
    +--------------+--------------------------------+
-
-Action: ``PHY_PORT``
-^^^^^^^^^^^^^^^^^^^^
-
-This action is deprecated. Consider:
- - `Action: PORT_REPRESENTOR`_
- - `Action: REPRESENTED_PORT`_
-
-Directs matching traffic to a given physical port index of the underlying
-device.
-
-See `Item: PHY_PORT`_.
-
-.. _table_rte_flow_action_phy_port:
-
-.. table:: PHY_PORT
-
-   +--------------+-------------------------------------+
-   | Field        | Value                               |
-   +==============+=====================================+
-   | ``original`` | use original port index if possible |
-   +--------------+-------------------------------------+
-   | ``index``    | physical port index                 |
-   +--------------+-------------------------------------+
 
 Action: ``PORT_ID``
 ^^^^^^^^^^^^^^^^^^^

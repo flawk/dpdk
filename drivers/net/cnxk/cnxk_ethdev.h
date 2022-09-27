@@ -273,8 +273,11 @@ TAILQ_HEAD(cnxk_eth_sec_sess_list, cnxk_eth_sec_sess);
 
 /* Inbound security data */
 struct cnxk_eth_dev_sec_inb {
+	/* IPSec inbound min SPI */
+	uint32_t min_spi;
+
 	/* IPSec inbound max SPI */
-	uint16_t max_spi;
+	uint32_t max_spi;
 
 	/* Using inbound with inline device */
 	bool inl_dev;
@@ -408,7 +411,8 @@ struct cnxk_eth_dev {
 	uint64_t clk_delta;
 
 	/* Ingress policer */
-	enum roc_nix_bpf_color precolor_tbl[ROC_NIX_BPF_PRE_COLOR_MAX];
+	enum roc_nix_bpf_color precolor_tbl[ROC_NIX_BPF_PRECOLOR_TBL_SIZE_DSCP];
+	enum rte_mtr_color_in_protocol proto;
 	struct cnxk_mtr_profiles mtr_profiles;
 	struct cnxk_mtr_policy mtr_policy;
 	struct cnxk_mtr mtr;
@@ -581,6 +585,7 @@ int cnxk_nix_rss_hash_update(struct rte_eth_dev *eth_dev,
 			     struct rte_eth_rss_conf *rss_conf);
 int cnxk_nix_rss_hash_conf_get(struct rte_eth_dev *eth_dev,
 			       struct rte_eth_rss_conf *rss_conf);
+int cnxk_nix_eth_dev_priv_dump(struct rte_eth_dev *eth_dev, FILE *file);
 
 /* Link */
 void cnxk_nix_toggle_flag_link_cfg(struct cnxk_eth_dev *dev, bool set);
@@ -641,6 +646,8 @@ struct cnxk_eth_sec_sess *cnxk_eth_sec_sess_get_by_spi(struct cnxk_eth_dev *dev,
 struct cnxk_eth_sec_sess *
 cnxk_eth_sec_sess_get_by_sess(struct cnxk_eth_dev *dev,
 			      struct rte_security_session *sess);
+int cnxk_nix_inl_meta_pool_cb(uint64_t *aura_handle, uint32_t buf_sz, uint32_t nb_bufs,
+			      bool destroy);
 
 /* Other private functions */
 int nix_recalc_mtu(struct rte_eth_dev *eth_dev);

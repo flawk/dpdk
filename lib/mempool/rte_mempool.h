@@ -112,12 +112,6 @@ struct rte_mempool_objsz {
 /* "MP_<name>" */
 #define	RTE_MEMPOOL_MZ_FORMAT	RTE_MEMPOOL_MZ_PREFIX "%s"
 
-#define	MEMPOOL_PG_SHIFT_MAX \
-	RTE_DEPRECATED(MEMPOOL_PG_SHIFT_MAX) (sizeof(uintptr_t) * CHAR_BIT - 1)
-
-/** Deprecated. Mempool over one chunk of physically continuous memory */
-#define	MEMPOOL_PG_NUM_DEFAULT	RTE_DEPRECATED(MEMPOOL_PG_NUM_DEFAULT) 1
-
 #ifndef RTE_MEMPOOL_ALIGN
 /**
  * Alignment of elements inside mempool.
@@ -328,10 +322,6 @@ struct rte_mempool {
 #define RTE_MEMPOOL_HEADER_SIZE(mp, cs) \
 	(sizeof(*(mp)) + (((cs) == 0) ? 0 : \
 	(sizeof(struct rte_mempool_cache) * RTE_MAX_LCORE)))
-
-/** Deprecated. Use RTE_MEMPOOL_HEADER_SIZE() for internal purposes only. */
-#define MEMPOOL_HEADER_SIZE(mp, cs) \
-	RTE_DEPRECATED(MEMPOOL_HEADER_SIZE) RTE_MEMPOOL_HEADER_SIZE(mp, cs)
 
 /* return the header of a mempool object (internal) */
 static inline struct rte_mempool_objhdr *
@@ -933,10 +923,6 @@ int rte_mempool_register_ops(const struct rte_mempool_ops *ops);
 	{							\
 		rte_mempool_register_ops(&ops);			\
 	}
-
-/** Deprecated. Use RTE_MEMPOOL_REGISTER_OPS() instead. */
-#define MEMPOOL_REGISTER_OPS(ops) \
-	RTE_DEPRECATED(MEMPOOL_REGISTER_OPS) RTE_MEMPOOL_REGISTER_OPS(ops)
 
 /**
  * An object callback function for mempool.

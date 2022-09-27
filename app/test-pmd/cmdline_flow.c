@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <inttypes.h>
 #include <errno.h>
 #include <ctype.h>
@@ -249,11 +250,6 @@ enum index {
 	ITEM_INVERT,
 	ITEM_ANY,
 	ITEM_ANY_NUM,
-	ITEM_PF,
-	ITEM_VF,
-	ITEM_VF_ID,
-	ITEM_PHY_PORT,
-	ITEM_PHY_PORT_INDEX,
 	ITEM_PORT_ID,
 	ITEM_PORT_ID_ID,
 	ITEM_MARK,
@@ -492,9 +488,6 @@ enum index {
 	ACTION_VF,
 	ACTION_VF_ORIGINAL,
 	ACTION_VF_ID,
-	ACTION_PHY_PORT,
-	ACTION_PHY_PORT_ORIGINAL,
-	ACTION_PHY_PORT_INDEX,
 	ACTION_PORT_ID,
 	ACTION_PORT_ID_ORIGINAL,
 	ACTION_PORT_ID_ID,
@@ -781,6 +774,8 @@ struct action_vxlan_encap_data sample_vxlan_encap[RAW_SAMPLE_CONFS_MAX_NUM];
 struct action_nvgre_encap_data sample_nvgre_encap[RAW_SAMPLE_CONFS_MAX_NUM];
 struct action_rss_data sample_rss_data[RAW_SAMPLE_CONFS_MAX_NUM];
 struct rte_flow_action_vf sample_vf[RAW_SAMPLE_CONFS_MAX_NUM];
+struct rte_flow_action_ethdev sample_port_representor[RAW_SAMPLE_CONFS_MAX_NUM];
+struct rte_flow_action_ethdev sample_represented_port[RAW_SAMPLE_CONFS_MAX_NUM];
 
 static const char *const modify_field_ops[] = {
 	"set", "add", "sub", NULL
@@ -1276,9 +1271,6 @@ static const enum index next_item[] = {
 	ITEM_VOID,
 	ITEM_INVERT,
 	ITEM_ANY,
-	ITEM_PF,
-	ITEM_VF,
-	ITEM_PHY_PORT,
 	ITEM_PORT_ID,
 	ITEM_MARK,
 	ITEM_RAW,
@@ -1344,18 +1336,6 @@ static const enum index item_fuzzy[] = {
 
 static const enum index item_any[] = {
 	ITEM_ANY_NUM,
-	ITEM_NEXT,
-	ZERO,
-};
-
-static const enum index item_vf[] = {
-	ITEM_VF_ID,
-	ITEM_NEXT,
-	ZERO,
-};
-
-static const enum index item_phy_port[] = {
-	ITEM_PHY_PORT_INDEX,
 	ITEM_NEXT,
 	ZERO,
 };
@@ -1817,7 +1797,6 @@ static const enum index next_action[] = {
 	ACTION_RSS,
 	ACTION_PF,
 	ACTION_VF,
-	ACTION_PHY_PORT,
 	ACTION_PORT_ID,
 	ACTION_METER,
 	ACTION_METER_COLOR,
@@ -1907,13 +1886,6 @@ static const enum index action_rss[] = {
 static const enum index action_vf[] = {
 	ACTION_VF_ORIGINAL,
 	ACTION_VF_ID,
-	ACTION_NEXT,
-	ZERO,
-};
-
-static const enum index action_phy_port[] = {
-	ACTION_PHY_PORT_ORIGINAL,
-	ACTION_PHY_PORT_INDEX,
 	ACTION_NEXT,
 	ZERO,
 };
@@ -3458,41 +3430,6 @@ static const struct token token_list[] = {
 		.help = "number of layers covered",
 		.next = NEXT(item_any, NEXT_ENTRY(COMMON_UNSIGNED), item_param),
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_any, num)),
-	},
-	[ITEM_PF] = {
-		.name = "pf",
-		.help = "match traffic from/to the physical function",
-		.priv = PRIV_ITEM(PF, 0),
-		.next = NEXT(NEXT_ENTRY(ITEM_NEXT)),
-		.call = parse_vc,
-	},
-	[ITEM_VF] = {
-		.name = "vf",
-		.help = "match traffic from/to a virtual function ID",
-		.priv = PRIV_ITEM(VF, sizeof(struct rte_flow_item_vf)),
-		.next = NEXT(item_vf),
-		.call = parse_vc,
-	},
-	[ITEM_VF_ID] = {
-		.name = "id",
-		.help = "VF ID",
-		.next = NEXT(item_vf, NEXT_ENTRY(COMMON_UNSIGNED), item_param),
-		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_vf, id)),
-	},
-	[ITEM_PHY_PORT] = {
-		.name = "phy_port",
-		.help = "match traffic from/to a specific physical port",
-		.priv = PRIV_ITEM(PHY_PORT,
-				  sizeof(struct rte_flow_item_phy_port)),
-		.next = NEXT(item_phy_port),
-		.call = parse_vc,
-	},
-	[ITEM_PHY_PORT_INDEX] = {
-		.name = "index",
-		.help = "physical port index",
-		.next = NEXT(item_phy_port, NEXT_ENTRY(COMMON_UNSIGNED),
-			     item_param),
-		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_phy_port, index)),
 	},
 	[ITEM_PORT_ID] = {
 		.name = "port_id",
@@ -5291,30 +5228,6 @@ static const struct token token_list[] = {
 		.help = "VF ID",
 		.next = NEXT(action_vf, NEXT_ENTRY(COMMON_UNSIGNED)),
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_vf, id)),
-		.call = parse_vc_conf,
-	},
-	[ACTION_PHY_PORT] = {
-		.name = "phy_port",
-		.help = "direct packets to physical port index",
-		.priv = PRIV_ACTION(PHY_PORT,
-				    sizeof(struct rte_flow_action_phy_port)),
-		.next = NEXT(action_phy_port),
-		.call = parse_vc,
-	},
-	[ACTION_PHY_PORT_ORIGINAL] = {
-		.name = "original",
-		.help = "use original port index if possible",
-		.next = NEXT(action_phy_port, NEXT_ENTRY(COMMON_BOOLEAN)),
-		.args = ARGS(ARGS_ENTRY_BF(struct rte_flow_action_phy_port,
-					   original, 1)),
-		.call = parse_vc_conf,
-	},
-	[ACTION_PHY_PORT_INDEX] = {
-		.name = "index",
-		.help = "physical port index",
-		.next = NEXT(action_phy_port, NEXT_ENTRY(COMMON_UNSIGNED)),
-		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_phy_port,
-					index)),
 		.call = parse_vc_conf,
 	},
 	[ACTION_PORT_ID] = {
@@ -10676,9 +10589,6 @@ flow_item_default_mask(const struct rte_flow_item *item)
 	case RTE_FLOW_ITEM_TYPE_ANY:
 		mask = &rte_flow_item_any_mask;
 		break;
-	case RTE_FLOW_ITEM_TYPE_VF:
-		mask = &rte_flow_item_vf_mask;
-		break;
 	case RTE_FLOW_ITEM_TYPE_PORT_ID:
 		mask = &rte_flow_item_port_id_mask;
 		break;
@@ -10871,6 +10781,18 @@ cmd_set_raw_parsed_sample(const struct buffer *in)
 			size = sizeof(struct rte_flow_action_nvgre_encap);
 			parse_setup_nvgre_encap_data(&sample_nvgre_encap[idx]);
 			action->conf = &sample_nvgre_encap[idx];
+			break;
+		case RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR:
+			size = sizeof(struct rte_flow_action_ethdev);
+			rte_memcpy(&sample_port_representor[idx],
+					(const void *)action->conf, size);
+			action->conf = &sample_port_representor[idx];
+			break;
+		case RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT:
+			size = sizeof(struct rte_flow_action_ethdev);
+			rte_memcpy(&sample_represented_port[idx],
+					(const void *)action->conf, size);
+			action->conf = &sample_represented_port[idx];
 			break;
 		default:
 			fprintf(stderr, "Error - Not supported action\n");

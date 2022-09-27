@@ -195,48 +195,6 @@ enum rte_flow_item_type {
 	 *
 	 * [META]
 	 *
-	 * Matches traffic originating from (ingress) or going to (egress)
-	 * the physical function of the current device.
-	 *
-	 * No associated specification structure.
-	 */
-	RTE_FLOW_ITEM_TYPE_PF,
-
-	/**
-	 * @deprecated
-	 * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
-	 * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
-	 *
-	 * [META]
-	 *
-	 * Matches traffic originating from (ingress) or going to (egress) a
-	 * given virtual function of the current device.
-	 *
-	 * See struct rte_flow_item_vf.
-	 */
-	RTE_FLOW_ITEM_TYPE_VF,
-
-	/**
-	 * @deprecated
-	 * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
-	 * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
-	 *
-	 * [META]
-	 *
-	 * Matches traffic originating from (ingress) or going to (egress) a
-	 * physical port of the underlying device.
-	 *
-	 * See struct rte_flow_item_phy_port.
-	 */
-	RTE_FLOW_ITEM_TYPE_PHY_PORT,
-
-	/**
-	 * @deprecated
-	 * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
-	 * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
-	 *
-	 * [META]
-	 *
 	 * Matches traffic originating from (ingress) or going to (egress) a
 	 * given DPDK port ID.
 	 *
@@ -719,74 +677,6 @@ static const struct rte_flow_item_any rte_flow_item_any_mask = {
  * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
  * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
  *
- * RTE_FLOW_ITEM_TYPE_VF
- *
- * Matches traffic originating from (ingress) or going to (egress) a given
- * virtual function of the current device.
- *
- * If supported, should work even if the virtual function is not managed by
- * the application and thus not associated with a DPDK port ID.
- *
- * Note this pattern item does not match VF representors traffic which, as
- * separate entities, should be addressed through their own DPDK port IDs.
- *
- * - Can be specified multiple times to match traffic addressed to several
- *   VF IDs.
- * - Can be combined with a PF item to match both PF and VF traffic.
- *
- * A zeroed mask can be used to match any VF ID.
- */
-struct rte_flow_item_vf {
-	uint32_t id; /**< VF ID. */
-};
-
-/** Default mask for RTE_FLOW_ITEM_TYPE_VF. */
-#ifndef __cplusplus
-static const struct rte_flow_item_vf rte_flow_item_vf_mask = {
-	.id = 0x00000000,
-};
-#endif
-
-/**
- * @deprecated
- * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
- * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
- *
- * RTE_FLOW_ITEM_TYPE_PHY_PORT
- *
- * Matches traffic originating from (ingress) or going to (egress) a
- * physical port of the underlying device.
- *
- * The first PHY_PORT item overrides the physical port normally associated
- * with the specified DPDK input port (port_id). This item can be provided
- * several times to match additional physical ports.
- *
- * Note that physical ports are not necessarily tied to DPDK input ports
- * (port_id) when those are not under DPDK control. Possible values are
- * specific to each device, they are not necessarily indexed from zero and
- * may not be contiguous.
- *
- * As a device property, the list of allowed values as well as the value
- * associated with a port_id should be retrieved by other means.
- *
- * A zeroed mask can be used to match any port index.
- */
-struct rte_flow_item_phy_port {
-	uint32_t index; /**< Physical port index. */
-};
-
-/** Default mask for RTE_FLOW_ITEM_TYPE_PHY_PORT. */
-#ifndef __cplusplus
-static const struct rte_flow_item_phy_port rte_flow_item_phy_port_mask = {
-	.index = 0x00000000,
-};
-#endif
-
-/**
- * @deprecated
- * @see RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR
- * @see RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT
- *
  * RTE_FLOW_ITEM_TYPE_PORT_ID
  *
  * Matches traffic originating from (ingress) or going to (egress) a given
@@ -795,11 +685,6 @@ static const struct rte_flow_item_phy_port rte_flow_item_phy_port_mask = {
  * Normally only supported if the port ID in question is known by the
  * underlying PMD and related to the device the flow rule is created
  * against.
- *
- * This must not be confused with @p PHY_PORT which refers to the physical
- * port of a device, whereas @p PORT_ID refers to a struct rte_eth_dev
- * object on the application side (also known as "port representor"
- * depending on the kind of underlying device).
  */
 struct rte_flow_item_port_id {
 	uint32_t id; /**< DPDK port ID. */
@@ -1918,9 +1803,6 @@ static const struct rte_flow_item_conntrack rte_flow_item_conntrack_mask = {
 #endif
 
 /**
- * @warning
- * @b EXPERIMENTAL: this structure may change without prior notice
- *
  * Provides an ethdev port ID for use with the following items:
  * RTE_FLOW_ITEM_TYPE_PORT_REPRESENTOR,
  * RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT.
@@ -2341,18 +2223,6 @@ enum rte_flow_action_type {
 	 * See struct rte_flow_action_vf.
 	 */
 	RTE_FLOW_ACTION_TYPE_VF,
-
-	/**
-	 * @deprecated
-	 * @see RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR
-	 * @see RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT
-	 *
-	 * Directs packets to a given physical port index of the underlying
-	 * device.
-	 *
-	 * See struct rte_flow_action_phy_port.
-	 */
-	RTE_FLOW_ACTION_TYPE_PHY_PORT,
 
 	/**
 	 * @deprecated
@@ -3083,24 +2953,6 @@ struct rte_flow_action_vf {
  * @see RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR
  * @see RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT
  *
- * RTE_FLOW_ACTION_TYPE_PHY_PORT
- *
- * Directs packets to a given physical port index of the underlying
- * device.
- *
- * @see RTE_FLOW_ITEM_TYPE_PHY_PORT
- */
-struct rte_flow_action_phy_port {
-	uint32_t original:1; /**< Use original port index if possible. */
-	uint32_t reserved:31; /**< Reserved, must be zero. */
-	uint32_t index; /**< Physical port index. */
-};
-
-/**
- * @deprecated
- * @see RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR
- * @see RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT
- *
  * RTE_FLOW_ACTION_TYPE_PORT_ID
  *
  * Directs matching traffic to a given DPDK port ID.
@@ -3643,9 +3495,6 @@ struct rte_flow_action_meter_color {
 };
 
 /**
- * @warning
- * @b EXPERIMENTAL: this structure may change without prior notice
- *
  * Provides an ethdev port ID for use with the following actions:
  * RTE_FLOW_ACTION_TYPE_PORT_REPRESENTOR,
  * RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT.
@@ -3761,11 +3610,7 @@ extern uint64_t rte_flow_dynf_metadata_mask;
 
 /* Mbuf dynamic flags for metadata. */
 #define RTE_MBUF_DYNFLAG_RX_METADATA (rte_flow_dynf_metadata_mask)
-#define PKT_RX_DYNF_METADATA RTE_DEPRECATED(PKT_RX_DYNF_METADATA) \
-		RTE_MBUF_DYNFLAG_RX_METADATA
 #define RTE_MBUF_DYNFLAG_TX_METADATA (rte_flow_dynf_metadata_mask)
-#define PKT_TX_DYNF_METADATA RTE_DEPRECATED(PKT_TX_DYNF_METADATA) \
-		RTE_MBUF_DYNFLAG_TX_METADATA
 
 __rte_experimental
 static inline uint32_t
@@ -4798,9 +4643,6 @@ rte_flow_tunnel_item_release(uint16_t port_id,
 			     struct rte_flow_error *error);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice.
- *
  * Get a proxy port to manage "transfer" flows.
  *
  * Managing "transfer" flows requires that the user communicate them
@@ -4825,7 +4667,6 @@ rte_flow_tunnel_item_release(uint16_t port_id,
  * @return
  *   0 on success, a negative error code otherwise
  */
-__rte_experimental
 int
 rte_flow_pick_transfer_proxy(uint16_t port_id, uint16_t *proxy_port_id,
 			     struct rte_flow_error *error);

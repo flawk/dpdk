@@ -817,6 +817,7 @@ cnxk_ipsec_ivlen_get(enum rte_crypto_cipher_algorithm c_algo,
 	case RTE_CRYPTO_CIPHER_AES_CTR:
 		ivlen = 8;
 		break;
+	case RTE_CRYPTO_CIPHER_DES_CBC:
 	case RTE_CRYPTO_CIPHER_3DES_CBC:
 		ivlen = ROC_CPT_DES_BLOCK_LENGTH;
 		break;
@@ -851,6 +852,7 @@ cnxk_ipsec_icvlen_get(enum rte_crypto_cipher_algorithm c_algo,
 	case RTE_CRYPTO_AUTH_NULL:
 		icv = 0;
 		break;
+	case RTE_CRYPTO_AUTH_MD5_HMAC:
 	case RTE_CRYPTO_AUTH_SHA1_HMAC:
 		icv = 12;
 		break;
@@ -898,6 +900,7 @@ cnxk_ipsec_outb_roundup_byte(enum rte_crypto_cipher_algorithm c_algo,
 	case RTE_CRYPTO_CIPHER_AES_CBC:
 		roundup_byte = 16;
 		break;
+	case RTE_CRYPTO_CIPHER_DES_CBC:
 	case RTE_CRYPTO_CIPHER_3DES_CBC:
 		roundup_byte = 8;
 		break;
@@ -1032,6 +1035,12 @@ on_ipsec_sa_ctl_set(struct rte_security_ipsec_xform *ipsec,
 			switch (cipher_xform->cipher.algo) {
 			case RTE_CRYPTO_CIPHER_NULL:
 				ctl->enc_type = ROC_IE_ON_SA_ENC_NULL;
+				break;
+			case RTE_CRYPTO_CIPHER_DES_CBC:
+				ctl->enc_type = ROC_IE_ON_SA_ENC_DES_CBC;
+				break;
+			case RTE_CRYPTO_CIPHER_3DES_CBC:
+				ctl->enc_type = ROC_IE_ON_SA_ENC_3DES_CBC;
 				break;
 			case RTE_CRYPTO_CIPHER_AES_CBC:
 				ctl->enc_type = ROC_IE_ON_SA_ENC_AES_CBC;
@@ -1200,6 +1209,7 @@ cnxk_on_ipsec_outb_sa_create(struct rte_security_ipsec_xform *ipsec,
 		ctx_len = offsetof(struct roc_ie_on_outb_sa, aes_gcm.template);
 	} else {
 		switch (ctl->auth_type) {
+		case ROC_IE_ON_SA_AUTH_MD5:
 		case ROC_IE_ON_SA_AUTH_SHA1:
 			template = &out_sa->sha1.template;
 			ctx_len = offsetof(struct roc_ie_on_outb_sa,
@@ -1242,7 +1252,9 @@ cnxk_on_ipsec_outb_sa_create(struct rte_security_ipsec_xform *ipsec,
 			ctx_len += sizeof(template->ip4);
 
 			ip4->version_ihl = RTE_IPV4_VHL_DEF;
-			ip4->time_to_live = ipsec->tunnel.ipv4.ttl;
+			ip4->time_to_live = ipsec->tunnel.ipv4.ttl ?
+						    ipsec->tunnel.ipv4.ttl :
+						    0x40;
 			ip4->type_of_service |= (ipsec->tunnel.ipv4.dscp << 2);
 			if (ipsec->tunnel.ipv4.df)
 				frag_off |= RTE_IPV4_HDR_DF_FLAG;
@@ -1275,7 +1287,9 @@ cnxk_on_ipsec_outb_sa_create(struct rte_security_ipsec_xform *ipsec,
 						 ((ipsec->tunnel.ipv6.flabel
 						   << RTE_IPV6_HDR_FL_SHIFT) &
 						  RTE_IPV6_HDR_FL_MASK));
-			ip6->hop_limits = ipsec->tunnel.ipv6.hlimit;
+			ip6->hop_limits = ipsec->tunnel.ipv6.hlimit ?
+						  ipsec->tunnel.ipv6.hlimit :
+						  0x40;
 			memcpy(&ip6->src_addr, &ipsec->tunnel.ipv6.src_addr,
 			       sizeof(struct in6_addr));
 			memcpy(&ip6->dst_addr, &ipsec->tunnel.ipv6.dst_addr,
@@ -1294,6 +1308,7 @@ cnxk_on_ipsec_outb_sa_create(struct rte_security_ipsec_xform *ipsec,
 		case RTE_CRYPTO_AUTH_AES_GMAC:
 		case RTE_CRYPTO_AUTH_NULL:
 			break;
+		case RTE_CRYPTO_AUTH_MD5_HMAC:
 		case RTE_CRYPTO_AUTH_SHA1_HMAC:
 			memcpy(out_sa->sha1.hmac_key, auth_key, auth_key_len);
 			break;
@@ -1342,6 +1357,7 @@ cnxk_on_ipsec_inb_sa_create(struct rte_security_ipsec_xform *ipsec,
 		switch (auth_xform->auth.algo) {
 		case RTE_CRYPTO_AUTH_NULL:
 			break;
+		case RTE_CRYPTO_AUTH_MD5_HMAC:
 		case RTE_CRYPTO_AUTH_SHA1_HMAC:
 			memcpy(in_sa->sha1_or_gcm.hmac_key, auth_key,
 			       auth_key_len);

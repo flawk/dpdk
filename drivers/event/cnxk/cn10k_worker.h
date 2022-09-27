@@ -108,14 +108,33 @@ cn10k_wqe_to_mbuf(uint64_t wqe, const uint64_t __mbuf, uint8_t port_id,
 			      mbuf_init | ((uint64_t)port_id) << 48, flags);
 }
 
-static __rte_always_inline void
-cn10k_process_vwqe(uintptr_t vwqe, uint16_t port_id, const uint32_t flags,
-		   void *lookup_mem, void *tstamp, uintptr_t lbase)
+static void
+cn10k_sso_process_tstamp(uint64_t u64, uint64_t mbuf,
+			 struct cnxk_timesync_info *tstamp)
 {
-	uint64_t mbuf_init = 0x100010000ULL | RTE_PKTMBUF_HEADROOM |
-			     (flags & NIX_RX_OFFLOAD_TSTAMP_F ? 8 : 0);
+	uint64_t tstamp_ptr;
+	uint8_t laptr;
+
+	laptr = (uint8_t) *
+		(uint64_t *)(u64 + (CNXK_SSO_WQE_LAYR_PTR * sizeof(uint64_t)));
+	if (laptr == sizeof(uint64_t)) {
+		/* Extracting tstamp, if PTP enabled*/
+		tstamp_ptr = *(uint64_t *)(((struct nix_wqe_hdr_s *)u64) +
+					   CNXK_SSO_WQE_SG_PTR);
+		cn10k_nix_mbuf_to_tstamp((struct rte_mbuf *)mbuf, tstamp, true,
+					 (uint64_t *)tstamp_ptr);
+	}
+}
+
+static __rte_always_inline void
+cn10k_process_vwqe(uintptr_t vwqe, uint16_t port_id, const uint32_t flags, struct cn10k_sso_hws *ws)
+{
+	uint64_t mbuf_init = 0x100010000ULL | RTE_PKTMBUF_HEADROOM;
+	struct cnxk_timesync_info *tstamp = ws->tstamp[port_id];
+	void *lookup_mem = ws->lookup_mem;
+	uintptr_t lbase = ws->lmt_base;
 	struct rte_event_vector *vec;
-	uint64_t aura_handle, laddr;
+	uint64_t meta_aura, laddr;
 	uint16_t nb_mbufs, non_vec;
 	uint16_t lmt_id, d_off;
 	struct rte_mbuf **wqe;
@@ -133,32 +152,40 @@ cn10k_process_vwqe(uintptr_t vwqe, uint16_t port_id, const uint32_t flags,
 	for (i = OBJS_PER_CLINE; i < vec->nb_elem; i += OBJS_PER_CLINE)
 		rte_prefetch0(&vec->ptrs[i]);
 
+	if (flags & NIX_RX_OFFLOAD_TSTAMP_F && tstamp)
+		mbuf_init |= 8;
+
+	meta_aura = ws->meta_aura;
 	nb_mbufs = RTE_ALIGN_FLOOR(vec->nb_elem, NIX_DESCS_PER_LOOP);
 	nb_mbufs = cn10k_nix_recv_pkts_vector(&mbuf_init, wqe, nb_mbufs,
-					      flags | NIX_RX_VWQE_F, lookup_mem,
-					      tstamp, lbase);
+					      flags | NIX_RX_VWQE_F,
+					      lookup_mem, tstamp,
+					      lbase, meta_aura);
 	wqe += nb_mbufs;
 	non_vec = vec->nb_elem - nb_mbufs;
 
 	if (flags & NIX_RX_OFFLOAD_SECURITY_F && non_vec) {
+		uint64_t sg_w1;
+
 		mbuf = (struct rte_mbuf *)((uintptr_t)wqe[0] -
 					   sizeof(struct rte_mbuf));
 		/* Pick first mbuf's aura handle assuming all
 		 * mbufs are from a vec and are from same RQ.
 		 */
-		aura_handle = mbuf->pool->pool_id;
+		meta_aura = ws->meta_aura;
+		if (!meta_aura)
+			meta_aura = mbuf->pool->pool_id;
 		ROC_LMT_BASE_ID_GET(lbase, lmt_id);
 		laddr = lbase;
 		laddr += 8;
-		d_off = ((uintptr_t)mbuf->buf_addr - (uintptr_t)mbuf);
-		d_off += (mbuf_init & 0xFFFF);
+		sg_w1 = *(uint64_t *)(((uintptr_t)wqe[0]) + 72);
+		d_off = sg_w1 - (uintptr_t)mbuf;
 		sa_base = cnxk_nix_sa_base_get(mbuf_init >> 48, lookup_mem);
 		sa_base &= ~(ROC_NIX_INL_SA_BASE_ALIGN - 1);
 	}
 
 	while (non_vec) {
 		struct nix_cqe_hdr_s *cqe = (struct nix_cqe_hdr_s *)wqe[0];
-		uint64_t tstamp_ptr;
 
 		mbuf = (struct rte_mbuf *)((char *)cqe -
 					   sizeof(struct rte_mbuf));
@@ -178,12 +205,10 @@ cn10k_process_vwqe(uintptr_t vwqe, uint16_t port_id, const uint32_t flags,
 
 		cn10k_nix_cqe_to_mbuf(cqe, cqe->tag, mbuf, lookup_mem,
 				      mbuf_init, flags);
-		/* Extracting tstamp, if PTP enabled*/
-		tstamp_ptr = *(uint64_t *)(((struct nix_wqe_hdr_s *)cqe) +
-					   CNXK_SSO_WQE_SG_PTR);
-		cn10k_nix_mbuf_to_tstamp((struct rte_mbuf *)mbuf, tstamp,
-					flags & NIX_RX_OFFLOAD_TSTAMP_F,
-					(uint64_t *)tstamp_ptr);
+
+		if (flags & NIX_RX_OFFLOAD_TSTAMP_F)
+			cn10k_sso_process_tstamp((uint64_t)wqe[0],
+						 (uint64_t)mbuf, tstamp);
 		wqe[0] = (struct rte_mbuf *)mbuf;
 		non_vec--;
 		wqe++;
@@ -191,7 +216,7 @@ cn10k_process_vwqe(uintptr_t vwqe, uint16_t port_id, const uint32_t flags,
 
 	/* Free remaining meta buffers if any */
 	if (flags & NIX_RX_OFFLOAD_SECURITY_F && loff) {
-		nix_sec_flush_meta(laddr, lmt_id, loff, aura_handle);
+		nix_sec_flush_meta(laddr, lmt_id, loff, meta_aura);
 		plt_io_wmb();
 	}
 }
@@ -200,8 +225,6 @@ static __rte_always_inline void
 cn10k_sso_hws_post_process(struct cn10k_sso_hws *ws, uint64_t *u64,
 			   const uint32_t flags)
 {
-	uint64_t tstamp_ptr;
-
 	u64[0] = (u64[0] & (0x3ull << 32)) << 6 |
 		 (u64[0] & (0x3FFull << 36)) << 4 | (u64[0] & 0xffffffff);
 	if ((flags & CPT_RX_WQE_F) &&
@@ -226,8 +249,7 @@ cn10k_sso_hws_post_process(struct cn10k_sso_hws *ws, uint64_t *u64,
 			uint64_t cq_w5;
 
 			m = (struct rte_mbuf *)mbuf;
-			d_off = (uintptr_t)(m->buf_addr) - (uintptr_t)m;
-			d_off += RTE_PKTMBUF_HEADROOM;
+			d_off = (*(uint64_t *)(u64[1] + 72)) - (uintptr_t)m;
 
 			cq_w1 = *(uint64_t *)(u64[1] + 8);
 			cq_w5 = *(uint64_t *)(u64[1] + 40);
@@ -246,12 +268,9 @@ cn10k_sso_hws_post_process(struct cn10k_sso_hws *ws, uint64_t *u64,
 		u64[0] = CNXK_CLR_SUB_EVENT(u64[0]);
 		cn10k_wqe_to_mbuf(u64[1], mbuf, port, u64[0] & 0xFFFFF, flags,
 				  ws->lookup_mem);
-		/* Extracting tstamp, if PTP enabled*/
-		tstamp_ptr = *(uint64_t *)(((struct nix_wqe_hdr_s *)u64[1]) +
-					   CNXK_SSO_WQE_SG_PTR);
-		cn10k_nix_mbuf_to_tstamp((struct rte_mbuf *)mbuf, ws->tstamp,
-					 flags & NIX_RX_OFFLOAD_TSTAMP_F,
-					 (uint64_t *)tstamp_ptr);
+		if (flags & NIX_RX_OFFLOAD_TSTAMP_F)
+			cn10k_sso_process_tstamp(u64[1], mbuf,
+						 ws->tstamp[port]);
 		u64[1] = mbuf;
 	} else if (CNXK_EVENT_TYPE_FROM_TAG(u64[0]) ==
 		   RTE_EVENT_TYPE_ETHDEV_VECTOR) {
@@ -261,8 +280,7 @@ cn10k_sso_hws_post_process(struct cn10k_sso_hws *ws, uint64_t *u64,
 		vwqe_hdr = ((vwqe_hdr >> 64) & 0xFFF) | BIT_ULL(31) |
 			   ((vwqe_hdr & 0xFFFF) << 48) | ((uint64_t)port << 32);
 		*(uint64_t *)u64[1] = (uint64_t)vwqe_hdr;
-		cn10k_process_vwqe(u64[1], port, flags, ws->lookup_mem,
-				   ws->tstamp, ws->lmt_base);
+		cn10k_process_vwqe(u64[1], port, flags, ws);
 		/* Mark vector mempool object as get */
 		RTE_MEMPOOL_CHECK_COOKIES(rte_mempool_from_obj((void *)u64[1]),
 					  (void **)&u64[1], 1, 1);
@@ -655,6 +673,11 @@ cn10k_sso_hws_event_tx(struct cn10k_sso_hws *ws, struct rte_event *ev,
 	}
 
 	m = ev->mbuf;
+	txq = cn10k_sso_hws_xtract_meta(m, txq_data);
+	if (((txq->nb_sqb_bufs_adj -
+	      __atomic_load_n((int16_t *)txq->fc_mem, __ATOMIC_RELAXED))
+	     << txq->sqes_per_sqb_log2) <= 0)
+		return 0;
 	cn10k_sso_tx_one(ws, m, cmd, lmt_id, lmt_addr, ev->sched_type, txq_data,
 			 flags);
 
