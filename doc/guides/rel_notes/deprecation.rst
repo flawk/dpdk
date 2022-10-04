@@ -18,9 +18,6 @@ Deprecation Notices
   in the future. Applications can use ``devtools/cocci/func_or_ret.cocci``
   to update their code.
 
-* eal: The function ``rte_eal_remote_launch`` will return new error codes
-  after read or write error on the pipe, instead of calling ``rte_panic``.
-
 * rte_atomicNN_xxx: These APIs do not take memory order parameter. This does
   not allow for writing optimized code for all the CPU architectures supported
   in DPDK. DPDK has adopted the atomic operations from
@@ -50,7 +47,6 @@ Deprecation Notices
   and `refinement <http://mails.dpdk.org/archives/dev/2022-June/243596.html>`_:
 
   * Some deprecation warnings will be added in DPDK 22.11.
-  * The KNI example application will be removed from DPDK 22.11.
   * The KNI kernel module, library and PMD will be removed from the DPDK 23.11.
 
 * lib: will fix extending some enum/define breaking the ABI. There are multiple
@@ -151,39 +147,5 @@ Deprecation Notices
   pointer for the private data to the application which can be attached
   to the packet while enqueuing.
 
-* security: MACsec support is planned to be added in DPDK 22.11,
-  which would result in updates to structures ``rte_security_macsec_xform``,
-  ``rte_security_macsec_stats`` and security capability structure
-  ``rte_security_capability`` to accommodate MACsec capabilities.
-
-* eventdev: The function ``rte_event_crypto_adapter_queue_pair_add`` will
-  accept configuration of type ``rte_event_crypto_adapter_queue_conf`` instead
-  of ``rte_event``, similar to ``rte_event_eth_rx_adapter_queue_add`` signature.
-  Event will be one of the configuration fields,
-  together with additional vector parameters.
-
-* eventdev: The function pointer declaration ``eventdev_stop_flush_t``
-  will be renamed to ``rte_eventdev_stop_flush_t`` in DPDK 22.11.
-
-* eventdev: The element ``*u64s`` in the structure ``rte_event_vector``
-  is deprecated and will be replaced with ``u64s`` in DPDK 22.11.
-
-* eventdev: The structure ``rte_event_vector`` will be modified to include
-  ``elem_offset:12`` bits taken from ``rsvd:15``. The ``elem_offset`` defines
-  the offset into the vector array from which valid elements are present.
-  The difference between ``rte_event_vector::nb_elem`` and
-  ``rte_event_vector::elem_offset`` gives the number of valid elements left
-  to process from the ``rte_event_vector::elem_offset``.
-
-* metrics: The function ``rte_metrics_init`` will have a non-void return
-  in order to notify errors instead of calling ``rte_exit``.
-
 * raw/dpaa2_cmdif: The ``dpaa2_cmdif`` rawdev driver will be deprecated
   in DPDK 22.11, as it is no longer in use, no active user known.
-
-* raw/ioat: The ``ioat`` rawdev driver has been deprecated, since it's
-  functionality is provided through the new ``dmadev`` infrastructure.
-  To continue to use hardware previously supported by the ``ioat`` rawdev driver,
-  applications should be updated to use the ``dmadev`` library instead,
-  with the underlying HW-functionality being provided by the ``ioat`` or
-  ``idxd`` dma drivers

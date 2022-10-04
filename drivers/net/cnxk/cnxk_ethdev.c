@@ -1080,7 +1080,7 @@ cnxk_nix_configure(struct rte_eth_dev *eth_dev)
 	struct roc_nix_fc_cfg fc_cfg = {0};
 	struct roc_nix *nix = &dev->nix;
 	struct rte_ether_addr *ea;
-	uint8_t nb_rxq, nb_txq;
+	uint16_t nb_rxq, nb_txq;
 	uint64_t rx_cfg;
 	void *qs;
 	int rc;
@@ -1700,8 +1700,7 @@ cnxk_eth_dev_init(struct rte_eth_dev *eth_dev)
 		return -ENOMEM;
 	sec_ctx->device = eth_dev;
 	sec_ctx->ops = &cnxk_eth_sec_ops;
-	sec_ctx->flags =
-		(RTE_SEC_CTX_F_FAST_SET_MDATA | RTE_SEC_CTX_F_FAST_GET_UDATA);
+	sec_ctx->flags = RTE_SEC_CTX_F_FAST_SET_MDATA;
 	eth_dev->security_ctx = sec_ctx;
 
 	/* For secondary processes, the primary has done all the work */

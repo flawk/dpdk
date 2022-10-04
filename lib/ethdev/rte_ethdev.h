@@ -3580,6 +3580,82 @@ int
 rte_eth_tx_done_cleanup(uint16_t port_id, uint16_t queue_id, uint32_t free_cnt);
 
 /**
+ * Subtypes for MACsec offload event (@ref RTE_ETH_EVENT_MACSEC)
+ * raised by Ethernet device.
+ */
+enum rte_eth_event_macsec_subtype {
+	/** Notifies unknown MACsec subevent. */
+	RTE_ETH_SUBEVENT_MACSEC_UNKNOWN,
+	/**
+	 * Subevent of RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR sectag validation events
+	 *	Validation check: SecTag.TCI.V = 1
+	 */
+	RTE_ETH_SUBEVENT_MACSEC_RX_SECTAG_V_EQ1,
+	/**
+	 * Subevent of RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR sectag validation events
+	 *	Validation check: SecTag.TCI.E = 0 && SecTag.TCI.C = 1
+	 */
+	RTE_ETH_SUBEVENT_MACSEC_RX_SECTAG_E_EQ0_C_EQ1,
+	/**
+	 * Subevent of RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR sectag validation events
+	 *	Validation check: SecTag.SL >= 'd48
+	 */
+	RTE_ETH_SUBEVENT_MACSEC_RX_SECTAG_SL_GTE48,
+	/**
+	 * Subevent of RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR sectag validation events
+	 *	Validation check: SecTag.TCI.ES = 1 && SecTag.TCI.SC = 1
+	 */
+	RTE_ETH_SUBEVENT_MACSEC_RX_SECTAG_ES_EQ1_SC_EQ1,
+	/**
+	 * Subevent of RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR sectag validation events
+	 *	Validation check: SecTag.TCI.SC = 1 && SecTag.TCI.SCB = 1
+	 */
+	RTE_ETH_SUBEVENT_MACSEC_RX_SECTAG_SC_EQ1_SCB_EQ1,
+};
+
+/**
+ * Event types for MACsec offload event (@ref RTE_ETH_EVENT_MACSEC)
+ * raised by eth device.
+ */
+enum rte_eth_event_macsec_type {
+	/** Notifies unknown MACsec event. */
+	RTE_ETH_EVENT_MACSEC_UNKNOWN,
+	/** Notifies Sectag validation failure events. */
+	RTE_ETH_EVENT_MACSEC_SECTAG_VAL_ERR,
+	/** Notifies Rx SA hard expiry events. */
+	RTE_ETH_EVENT_MACSEC_RX_SA_PN_HARD_EXP,
+	/** Notifies Rx SA soft expiry events. */
+	RTE_ETH_EVENT_MACSEC_RX_SA_PN_SOFT_EXP,
+	/** Notifies Tx SA hard expiry events. */
+	RTE_ETH_EVENT_MACSEC_TX_SA_PN_HARD_EXP,
+	/** Notifies Tx SA soft events. */
+	RTE_ETH_EVENT_MACSEC_TX_SA_PN_SOFT_EXP,
+	/** Notifies Invalid SA event. */
+	RTE_ETH_EVENT_MACSEC_SA_NOT_VALID,
+};
+
+/**
+ * Descriptor for @ref RTE_ETH_EVENT_MACSEC event.
+ * Used by ethdev to send extra information of the MACsec offload event.
+ */
+struct rte_eth_event_macsec_desc {
+	/** Type of RTE_ETH_EVENT_MACSEC_* event. */
+	enum rte_eth_event_macsec_type type;
+	/** Type of RTE_ETH_SUBEVENT_MACSEC_* subevent. */
+	enum rte_eth_event_macsec_subtype subtype;
+	/**
+	 * Event specific metadata.
+	 *
+	 * For the following events, *userdata* registered
+	 * with the *rte_security_session* would be returned
+	 * as metadata.
+	 *
+	 * @see struct rte_security_session_conf
+	 */
+	uint64_t metadata;
+};
+
+/**
  * Subtypes for IPsec offload event(@ref RTE_ETH_EVENT_IPSEC) raised by
  * eth device.
  */
@@ -3590,8 +3666,26 @@ enum rte_eth_event_ipsec_subtype {
 	RTE_ETH_EVENT_IPSEC_ESN_OVERFLOW,
 	/** Soft time expiry of SA */
 	RTE_ETH_EVENT_IPSEC_SA_TIME_EXPIRY,
-	/** Soft byte expiry of SA */
+	/**
+	 * Soft byte expiry of SA determined by
+	 * @ref rte_security_ipsec_lifetime::bytes_soft_limit
+	 */
 	RTE_ETH_EVENT_IPSEC_SA_BYTE_EXPIRY,
+	/**
+	 * Soft packet expiry of SA determined by
+	 * @ref rte_security_ipsec_lifetime::packets_soft_limit
+	 */
+	RTE_ETH_EVENT_IPSEC_SA_PKT_EXPIRY,
+	/**
+	 * Hard byte expiry of SA determined by
+	 * @ref rte_security_ipsec_lifetime::bytes_hard_limit
+	 */
+	RTE_ETH_EVENT_IPSEC_SA_BYTE_HARD_EXPIRY,
+	/**
+	 * Hard packet expiry of SA determined by
+	 * @ref rte_security_ipsec_lifetime::packets_hard_limit
+	 */
+	RTE_ETH_EVENT_IPSEC_SA_PKT_HARD_EXPIRY,
 	/** Max value of this enum */
 	RTE_ETH_EVENT_IPSEC_MAX
 };
@@ -3613,6 +3707,9 @@ struct rte_eth_event_ipsec_desc {
 	 * - @ref RTE_ETH_EVENT_IPSEC_ESN_OVERFLOW
 	 * - @ref RTE_ETH_EVENT_IPSEC_SA_TIME_EXPIRY
 	 * - @ref RTE_ETH_EVENT_IPSEC_SA_BYTE_EXPIRY
+	 * - @ref RTE_ETH_EVENT_IPSEC_SA_PKT_EXPIRY
+	 * - @ref RTE_ETH_EVENT_IPSEC_SA_BYTE_HARD_EXPIRY
+	 * - @ref RTE_ETH_EVENT_IPSEC_SA_PKT_HARD_EXPIRY
 	 *
 	 * @see struct rte_security_session_conf
 	 *
@@ -5392,6 +5489,10 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
 /**
  * Get the number of used descriptors of a Rx queue
  *
+ * Since it's a dataplane function, no check is performed on port_id and
+ * queue_id. The caller must therefore ensure that the port is enabled
+ * and the queue is configured and running.
+ *
  * @param port_id
  *  The port identifier of the Ethernet device.
  * @param queue_id
@@ -5399,8 +5500,8 @@ rte_eth_rx_burst(uint16_t port_id, uint16_t queue_id,
  * @return
  *  The number of used descriptors in the specific queue, or:
  *   - (-ENODEV) if *port_id* is invalid.
- *     (-EINVAL) if *queue_id* is invalid
- *     (-ENOTSUP) if the device does not support this function
+ *   - (-EINVAL) if *queue_id* is invalid
+ *   - (-ENOTSUP) if the device does not support this function
  */
 static inline int
 rte_eth_rx_queue_count(uint16_t port_id, uint16_t queue_id)
@@ -5408,6 +5509,7 @@ rte_eth_rx_queue_count(uint16_t port_id, uint16_t queue_id)
 	struct rte_eth_fp_ops *p;
 	void *qd;
 
+#ifdef RTE_ETHDEV_DEBUG_RX
 	if (port_id >= RTE_MAX_ETHPORTS ||
 			queue_id >= RTE_MAX_QUEUES_PER_PORT) {
 		RTE_ETHDEV_LOG(ERR,
@@ -5415,17 +5517,20 @@ rte_eth_rx_queue_count(uint16_t port_id, uint16_t queue_id)
 			port_id, queue_id);
 		return -EINVAL;
 	}
+#endif
 
 	/* fetch pointer to queue data */
 	p = &rte_eth_fp_ops[port_id];
 	qd = p->rxq.data[queue_id];
 
+#ifdef RTE_ETHDEV_DEBUG_RX
 	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
-	if (*p->rx_queue_count == NULL)
-		return -ENOTSUP;
 	if (qd == NULL)
 		return -EINVAL;
+#endif
 
+	if (*p->rx_queue_count == NULL)
+		return -ENOTSUP;
 	return (int)(*p->rx_queue_count)(qd);
 }
 

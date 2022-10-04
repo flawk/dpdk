@@ -146,6 +146,7 @@ enum index {
 	QUEUE_INDIRECT_ACTION_CREATE,
 	QUEUE_INDIRECT_ACTION_UPDATE,
 	QUEUE_INDIRECT_ACTION_DESTROY,
+	QUEUE_INDIRECT_ACTION_QUERY,
 
 	/* Queue indirect action create arguments */
 	QUEUE_INDIRECT_ACTION_CREATE_ID,
@@ -161,6 +162,9 @@ enum index {
 	/* Queue indirect action destroy arguments */
 	QUEUE_INDIRECT_ACTION_DESTROY_ID,
 	QUEUE_INDIRECT_ACTION_DESTROY_POSTPONE,
+
+	/* Queue indirect action query arguments */
+	QUEUE_INDIRECT_ACTION_QUERY_POSTPONE,
 
 	/* Push arguments. */
 	PUSH_QUEUE,
@@ -220,6 +224,7 @@ enum index {
 	CONFIG_COUNTERS_NUMBER,
 	CONFIG_AGING_OBJECTS_NUMBER,
 	CONFIG_METERS_NUMBER,
+	CONFIG_CONN_TRACK_NUMBER,
 
 	/* Indirect action arguments */
 	INDIRECT_ACTION_CREATE,
@@ -791,7 +796,7 @@ static const char *const modify_field_ids[] = {
 	"udp_port_src", "udp_port_dst",
 	"vxlan_vni", "geneve_vni", "gtp_teid",
 	"tag", "mark", "meta", "pointer", "value",
-	"ipv4_ecn", "ipv6_ecn", NULL
+	"ipv4_ecn", "ipv6_ecn", "gtp_psc_qfi", NULL
 };
 
 /** Maximum number of subsequent tokens and arguments on the stack. */
@@ -1076,6 +1081,7 @@ static const enum index next_config_attr[] = {
 	CONFIG_COUNTERS_NUMBER,
 	CONFIG_AGING_OBJECTS_NUMBER,
 	CONFIG_METERS_NUMBER,
+	CONFIG_CONN_TRACK_NUMBER,
 	END,
 	ZERO,
 };
@@ -1166,6 +1172,7 @@ static const enum index next_qia_subcmd[] = {
 	QUEUE_INDIRECT_ACTION_CREATE,
 	QUEUE_INDIRECT_ACTION_UPDATE,
 	QUEUE_INDIRECT_ACTION_DESTROY,
+	QUEUE_INDIRECT_ACTION_QUERY,
 	ZERO,
 };
 
@@ -1188,6 +1195,12 @@ static const enum index next_qia_update_attr[] = {
 static const enum index next_qia_destroy_attr[] = {
 	QUEUE_INDIRECT_ACTION_DESTROY_POSTPONE,
 	QUEUE_INDIRECT_ACTION_DESTROY_ID,
+	END,
+	ZERO,
+};
+
+static const enum index next_qia_query_attr[] = {
+	QUEUE_INDIRECT_ACTION_QUERY_POSTPONE,
 	END,
 	ZERO,
 };
@@ -2639,6 +2652,14 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY(struct buffer,
 					args.configure.port_attr.nb_meters)),
 	},
+	[CONFIG_CONN_TRACK_NUMBER] = {
+		.name = "conn_tracks_number",
+		.help = "number of connection trackings",
+		.next = NEXT(next_config_attr,
+			     NEXT_ENTRY(COMMON_UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY(struct buffer,
+					args.configure.port_attr.nb_conn_tracks)),
+	},
 	/* Top-level command. */
 	[PATTERN_TEMPLATE] = {
 		.name = "pattern_template",
@@ -2985,6 +3006,14 @@ static const struct token token_list[] = {
 		.next = NEXT(next_qia_destroy_attr),
 		.call = parse_qia_destroy,
 	},
+	[QUEUE_INDIRECT_ACTION_QUERY] = {
+		.name = "query",
+		.help = "query indirect action",
+		.next = NEXT(next_qia_query_attr,
+			     NEXT_ENTRY(COMMON_INDIRECT_ACTION_ID)),
+		.args = ARGS(ARGS_ENTRY(struct buffer, args.vc.attr.group)),
+		.call = parse_qia,
+	},
 	/* Indirect action destroy arguments. */
 	[QUEUE_INDIRECT_ACTION_DESTROY_POSTPONE] = {
 		.name = "postpone",
@@ -3007,6 +3036,14 @@ static const struct token token_list[] = {
 		.name = "postpone",
 		.help = "postpone update operation",
 		.next = NEXT(next_qia_update_attr,
+			     NEXT_ENTRY(COMMON_BOOLEAN)),
+		.args = ARGS(ARGS_ENTRY(struct buffer, postpone)),
+	},
+	/* Indirect action update arguments. */
+	[QUEUE_INDIRECT_ACTION_QUERY_POSTPONE] = {
+		.name = "postpone",
+		.help = "postpone query operation",
+		.next = NEXT(next_qia_query_attr,
 			     NEXT_ENTRY(COMMON_BOOLEAN)),
 		.args = ARGS(ARGS_ENTRY(struct buffer, postpone)),
 	},
@@ -6595,6 +6632,8 @@ parse_qia(struct context *ctx, const struct token *token,
 			(void *)RTE_ALIGN_CEIL((uintptr_t)(out + 1),
 					       sizeof(double));
 		out->args.vc.attr.group = UINT32_MAX;
+		/* fallthrough */
+	case QUEUE_INDIRECT_ACTION_QUERY:
 		out->command = ctx->curr;
 		ctx->objdata = 0;
 		ctx->object = out;
@@ -10421,6 +10460,11 @@ cmd_flow_parsed(const struct buffer *in)
 						in->queue, in->postpone,
 						in->args.vc.attr.group,
 						in->args.vc.actions);
+		break;
+	case QUEUE_INDIRECT_ACTION_QUERY:
+		port_queue_action_handle_query(in->port,
+					       in->queue, in->postpone,
+					       in->args.vc.attr.group);
 		break;
 	case INDIRECT_ACTION_CREATE:
 		port_action_handle_create(

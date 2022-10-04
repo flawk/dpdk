@@ -55,6 +55,21 @@ New Features
      Also, make sure to start the actual text at the margin.
      =======================================================
 
+* **Added configuration for asynchronous flow connection tracking.**
+
+  Added connection tracking action number hint to ``rte_flow_configure``
+  and ``rte_flow_info_get``.
+  PMD can prepare the connection tracking resources according to the hint.
+
+* **Added support for queue-based async query in flow API.**
+
+  Added new function ``rte_flow_async_action_handle_query()``,
+  to query the action asynchronously.
+
+* **Updated Intel iavf driver.**
+
+  * Added flow subscription support.
+
 * **Updated Marvell cnxk driver.**
 
   * Added support for flow action REPRESENTED_PORT.
@@ -67,6 +82,26 @@ New Features
 
   * Added support to set device link down/up.
 
+* **Added support for MACsec in rte_security.**
+
+  Added MACsec transform for rte_security session and added new API
+  to configure security associations (SA) and secure channels (SC).
+
+* **Added new algorithms to cryptodev.**
+
+  * Added symmetric hash algorithm ShangMi 3 (SM3).
+  * Added symmetric cipher algorithm ShangMi 4 (SM4) in ECB, CBC and CTR modes.
+
+* **Updated Intel QuickAssist Technology (QAT) symmetric crypto driver.**
+
+  * Added support for SM3 hash algorithm.
+  * Added support for SM4 encryption algorithm in ECB, CBC and CTR modes.
+
+* **Updated Marvell cnxk crypto driver.**
+
+  * Added AES-CCM support in lookaside protocol (IPsec) for CN9K & CN10K.
+  * Added AES & DES DOCSIS algorithm support in lookaside crypto for CN9K.
+
 * **Added eventdev adapter instance get API.**
 
   * Added ``rte_event_eth_rx_adapter_instance_get`` to get Rx adapter
@@ -74,6 +109,19 @@ New Features
 
   * Added ``rte_event_eth_tx_adapter_instance_get`` to get Tx adapter
     instance ID for specified ethernet device ID and Tx queue index.
+
+* **Added eventdev Tx adapter queue start/stop API.**
+
+  * Added ``rte_event_eth_tx_adapter_queue_start`` to start
+    enqueueing packets to the Tx queue by Tx adapter.
+  * Added ``rte_event_eth_tx_adapter_queue_stop`` to stop the Tx Adapter
+    from enqueueing any packets to the Tx queue.
+
+* **Added event crypto adapter vectorization support.**
+
+  Added support to aggregate crypto operations processed by event crypto adapter
+  into single event containing ``rte_event_vector``
+  whose event type is ``RTE_EVENT_TYPE_CRYPTODEV_VECTOR``.
 
 
 Removed Items
@@ -100,6 +148,9 @@ Removed Items
 * ethdev: removed ``RTE_FLOW_ACTION_TYPE_PHY_PORT``;
   use ``RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT``.
 
+* vhost: Removed deprecated ``rte_vhost_gpa_to_vva`` and
+  ``rte_vhost_get_queue_num`` helpers.
+
 
 API Changes
 -----------
@@ -119,6 +170,9 @@ API Changes
 * eal: RTE_FUNC_PTR_OR_* macros have been marked deprecated and will be removed
   in the future. Applications can use ``devtools/cocci/func_or_ret.cocci``
   to update their code.
+
+* eal: Updated ``rte_eal_remote_launch`` so it returns -EPIPE in case of
+  a read or write error on the pipe, instead of calling ``rte_panic``.
 
 * mempool: Deprecated helper macro ``MEMPOOL_HEADER_SIZE()`` is removed.
   The replacement macro ``RTE_MEMPOOL_HEADER_SIZE()`` is internal only.
@@ -204,6 +258,26 @@ API Changes
 * ethdev: Promoted ``rte_flow_pick_transfer_proxy()``
   from experimental to stable.
 
+* security: MACsec support is added which resulted in updates
+  to structures ``rte_security_macsec_xform``, ``rte_security_macsec_stats``
+  and security capability structure ``rte_security_capability``
+  to accommodate MACsec capabilities.
+
+* security: The experimental API ``rte_security_get_userdata`` was being unused
+  by most of the drivers and it was retrieving userdata from mbuf dynamic field.
+  The API is now removed and the application can directly get the userdata from
+  mbuf dynamic field.
+
+* eventdev: The function ``rte_event_crypto_adapter_queue_pair_add`` was updated
+  to accept configuration of type ``rte_event_crypto_adapter_queue_conf``
+  instead of ``rte_event``,
+  similar to ``rte_event_eth_rx_adapter_queue_add`` signature.
+  Event will be one of the configuration fields,
+  together with additional vector parameters.
+
+* metrics: Updated ``rte_metrics_init`` so it returns an error code instead
+  of calling ``rte_exit``.
+
 * telemetry: The allowed characters in names for dictionary values
   are now limited to alphanumeric characters and a small subset of additional
   printable characters.
@@ -229,6 +303,9 @@ ABI Changes
    This section is a comment. Do not overwrite or remove it.
    Also, make sure to start the actual text at the margin.
    =======================================================
+
+* eal: Updated EAL thread names from ``lcore-worker-<lcore_id>`` to
+  ``rte-worker-<lcore_id>`` so that DPDK can accommodate lcores higher than 99.
 
 * ethdev: enum ``RTE_FLOW_ITEM`` was affected by deprecation procedure.
 

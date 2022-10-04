@@ -893,11 +893,12 @@ iavf_ipsec_crypto_session_update(void *device,
 		 * iavf_security_session for outbound SA for use
 		 * in *iavf_ipsec_crypto_pkt_metadata_set* function.
 		 */
+		iavf_sess->esn.hi = conf->ipsec.esn.hi;
+		iavf_sess->esn.low = conf->ipsec.esn.low;
 		if (iavf_sess->direction == RTE_SECURITY_IPSEC_SA_DIR_INGRESS)
 			rc = iavf_ipsec_crypto_sa_update_esn(adapter,
 					iavf_sess);
-		else
-			iavf_sess->esn.hi = conf->ipsec.esn.hi;
+
 	}
 
 	return rc;
@@ -1481,7 +1482,6 @@ static struct rte_security_ops iavf_ipsec_crypto_ops = {
 	.session_stats_get		= iavf_ipsec_crypto_session_stats_get,
 	.session_destroy		= iavf_ipsec_crypto_session_destroy,
 	.set_pkt_metadata		= iavf_ipsec_crypto_pkt_metadata_set,
-	.get_userdata			= NULL,
 	.capabilities_get		= iavf_ipsec_crypto_capabilities_get,
 };
 
@@ -1932,15 +1932,19 @@ static struct iavf_flow_engine iavf_ipsec_flow_engine = {
 
 static int
 iavf_ipsec_flow_parse(struct iavf_adapter *ad,
-		       struct iavf_pattern_match_item *array,
-		       uint32_t array_len,
-		       const struct rte_flow_item pattern[],
-		       const struct rte_flow_action actions[],
-		       void **meta,
-		       struct rte_flow_error *error)
+		      struct iavf_pattern_match_item *array,
+		      uint32_t array_len,
+		      const struct rte_flow_item pattern[],
+		      const struct rte_flow_action actions[],
+		      uint32_t priority,
+		      void **meta,
+		      struct rte_flow_error *error)
 {
 	struct iavf_pattern_match_item *item = NULL;
 	int ret = -1;
+
+	if (priority >= 1)
+		return -rte_errno;
 
 	item = iavf_search_pattern_match_item(pattern, array, array_len, error);
 	if (item && item->meta) {

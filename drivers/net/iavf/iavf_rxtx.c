@@ -1277,7 +1277,9 @@ iavf_flex_rxd_error_to_pkt_flags(uint16_t stat_err0)
 		return 0;
 
 	if (likely(!(stat_err0 & IAVF_RX_FLEX_ERR0_BITS))) {
-		flags |= (RTE_MBUF_F_RX_IP_CKSUM_GOOD | RTE_MBUF_F_RX_L4_CKSUM_GOOD);
+		flags |= (RTE_MBUF_F_RX_IP_CKSUM_GOOD |
+			RTE_MBUF_F_RX_L4_CKSUM_GOOD |
+			RTE_MBUF_F_RX_OUTER_L4_CKSUM_GOOD);
 		return flags;
 	}
 
@@ -1293,6 +1295,11 @@ iavf_flex_rxd_error_to_pkt_flags(uint16_t stat_err0)
 
 	if (unlikely(stat_err0 & (1 << IAVF_RX_FLEX_DESC_STATUS0_XSUM_EIPE_S)))
 		flags |= RTE_MBUF_F_RX_OUTER_IP_CKSUM_BAD;
+
+	if (unlikely(stat_err0 & (1 << IAVF_RX_FLEX_DESC_STATUS0_XSUM_EUDPE_S)))
+		flags |= RTE_MBUF_F_RX_OUTER_L4_CKSUM_BAD;
+	else
+		flags |= RTE_MBUF_F_RX_OUTER_L4_CKSUM_GOOD;
 
 	return flags;
 }
@@ -2334,7 +2341,8 @@ static inline uint16_t
 iavf_calc_context_desc(uint64_t flags, uint8_t vlan_flag)
 {
 	if (flags & (RTE_MBUF_F_TX_TCP_SEG | RTE_MBUF_F_TX_UDP_SEG |
-			RTE_MBUF_F_TX_TUNNEL_MASK))
+	    RTE_MBUF_F_TX_TUNNEL_MASK | RTE_MBUF_F_TX_OUTER_IP_CKSUM |
+	    RTE_MBUF_F_TX_OUTER_UDP_CKSUM))
 		return 1;
 	if (flags & RTE_MBUF_F_TX_VLAN &&
 	    vlan_flag & IAVF_TX_FLAGS_VLAN_TAG_LOC_L2TAG2)
@@ -2398,6 +2406,44 @@ iavf_fill_ctx_desc_tunnelling_field(volatile uint64_t *qw0,
 		eip_len = m->outer_l3_len >> 2;
 	break;
 	}
+
+	/* L4TUNT: L4 Tunneling Type */
+	switch (m->ol_flags & RTE_MBUF_F_TX_TUNNEL_MASK) {
+	case RTE_MBUF_F_TX_TUNNEL_IPIP:
+		/* for non UDP / GRE tunneling, set to 00b */
+		break;
+	case RTE_MBUF_F_TX_TUNNEL_VXLAN:
+	case RTE_MBUF_F_TX_TUNNEL_GTP:
+	case RTE_MBUF_F_TX_TUNNEL_GENEVE:
+		eip_typ |= IAVF_TXD_CTX_UDP_TUNNELING;
+		break;
+	case RTE_MBUF_F_TX_TUNNEL_GRE:
+		eip_typ |= IAVF_TXD_CTX_GRE_TUNNELING;
+		break;
+	default:
+		PMD_TX_LOG(ERR, "Tunnel type not supported");
+		return;
+	}
+
+	/* L4TUNLEN: L4 Tunneling Length, in Words
+	 *
+	 * We depend on app to set rte_mbuf.l2_len correctly.
+	 * For IP in GRE it should be set to the length of the GRE
+	 * header;
+	 * For MAC in GRE or MAC in UDP it should be set to the length
+	 * of the GRE or UDP headers plus the inner MAC up to including
+	 * its last Ethertype.
+	 * If MPLS labels exists, it should include them as well.
+	 */
+	eip_typ |= (m->l2_len >> 1) << IAVF_TXD_CTX_QW0_NATLEN_SHIFT;
+
+	/**
+	 * Calculate the tunneling UDP checksum.
+	 * Shall be set only if L4TUNT = 01b and EIPT is not zero
+	 */
+	if (!(eip_typ & IAVF_TX_CTX_EXT_IP_NONE) &&
+	    (eip_typ & IAVF_TXD_CTX_UDP_TUNNELING))
+		eip_typ |= IAVF_TXD_CTX_QW0_L4T_CS_MASK;
 
 	*qw0 = eip_typ << IAVF_TXD_CTX_QW0_TUN_PARAMS_EIPT_SHIFT |
 		eip_len << IAVF_TXD_CTX_QW0_TUN_PARAMS_EIPLEN_SHIFT |
@@ -2535,12 +2581,19 @@ iavf_build_data_desc_cmd_offset_fields(volatile uint64_t *qw1,
 	}
 
 	/* Set MACLEN */
-	offset |= (m->l2_len >> 1) << IAVF_TX_DESC_LENGTH_MACLEN_SHIFT;
+	if (m->ol_flags & RTE_MBUF_F_TX_TUNNEL_MASK)
+		offset |= (m->outer_l2_len >> 1)
+			<< IAVF_TX_DESC_LENGTH_MACLEN_SHIFT;
+	else
+		offset |= (m->l2_len >> 1)
+			<< IAVF_TX_DESC_LENGTH_MACLEN_SHIFT;
 
 	/* Enable L3 checksum offloading inner */
-	if (m->ol_flags & (RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV4)) {
-		command |= IAVF_TX_DESC_CMD_IIPT_IPV4_CSUM;
-		offset |= (m->l3_len >> 2) << IAVF_TX_DESC_LENGTH_IPLEN_SHIFT;
+	if (m->ol_flags & RTE_MBUF_F_TX_IP_CKSUM) {
+		if (m->ol_flags & RTE_MBUF_F_TX_IPV4) {
+			command |= IAVF_TX_DESC_CMD_IIPT_IPV4_CSUM;
+			offset |= (m->l3_len >> 2) << IAVF_TX_DESC_LENGTH_IPLEN_SHIFT;
+		}
 	} else if (m->ol_flags & RTE_MBUF_F_TX_IPV4) {
 		command |= IAVF_TX_DESC_CMD_IIPT_IPV4;
 		offset |= (m->l3_len >> 2) << IAVF_TX_DESC_LENGTH_IPLEN_SHIFT;
@@ -2863,6 +2916,7 @@ iavf_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 	struct rte_mbuf *m;
 	struct iavf_tx_queue *txq = tx_queue;
 	struct rte_eth_dev *dev = &rte_eth_devices[txq->port_id];
+	uint16_t max_frame_size = dev->data->mtu + IAVF_ETH_OVERHEAD;
 	struct iavf_info *vf = IAVF_DEV_PRIVATE_TO_VF(dev->data->dev_private);
 	struct iavf_adapter *adapter = IAVF_DEV_PRIVATE_TO_ADAPTER(dev->data->dev_private);
 
@@ -2888,6 +2942,14 @@ iavf_prep_pkts(__rte_unused void *tx_queue, struct rte_mbuf **tx_pkts,
 
 		if (ol_flags & IAVF_TX_OFFLOAD_NOTSUP_MASK) {
 			rte_errno = ENOTSUP;
+			return i;
+		}
+
+		/* check the data_len in mbuf */
+		if (m->data_len < IAVF_TX_MIN_PKT_LEN ||
+			m->data_len > max_frame_size) {
+			rte_errno = EINVAL;
+			PMD_DRV_LOG(ERR, "INVALID mbuf: bad data_len=[%hu]", m->data_len);
 			return i;
 		}
 
@@ -3184,14 +3246,14 @@ iavf_tx_done_cleanup_full(struct iavf_tx_queue *txq,
 			uint32_t free_cnt)
 {
 	struct iavf_tx_entry *swr_ring = txq->sw_ring;
-	uint16_t i, tx_last, tx_id;
+	uint16_t tx_last, tx_id;
 	uint16_t nb_tx_free_last;
 	uint16_t nb_tx_to_clean;
-	uint32_t pkt_cnt;
+	uint32_t pkt_cnt = 0;
 
-	/* Start free mbuf from the next of tx_tail */
-	tx_last = txq->tx_tail;
-	tx_id  = swr_ring[tx_last].next_id;
+	/* Start free mbuf from tx_tail */
+	tx_id = txq->tx_tail;
+	tx_last = tx_id;
 
 	if (txq->nb_free == 0 && iavf_xmit_cleanup(txq))
 		return 0;
@@ -3204,10 +3266,8 @@ iavf_tx_done_cleanup_full(struct iavf_tx_queue *txq,
 	/* Loop through swr_ring to count the amount of
 	 * freeable mubfs and packets.
 	 */
-	for (pkt_cnt = 0; pkt_cnt < free_cnt; ) {
-		for (i = 0; i < nb_tx_to_clean &&
-			pkt_cnt < free_cnt &&
-			tx_id != tx_last; i++) {
+	while (pkt_cnt < free_cnt) {
+		do {
 			if (swr_ring[tx_id].mbuf != NULL) {
 				rte_pktmbuf_free_seg(swr_ring[tx_id].mbuf);
 				swr_ring[tx_id].mbuf = NULL;
@@ -3220,7 +3280,7 @@ iavf_tx_done_cleanup_full(struct iavf_tx_queue *txq,
 			}
 
 			tx_id = swr_ring[tx_id].next_id;
-		}
+		} while (--nb_tx_to_clean && pkt_cnt < free_cnt && tx_id != tx_last);
 
 		if (txq->rs_thresh > txq->nb_tx_desc -
 			txq->nb_free || tx_id == tx_last)

@@ -424,15 +424,6 @@ cn10k_nix_prep_sec_vec(struct rte_mbuf *m, uint64x2_t *cmd0, uint64x2_t *cmd1,
 
 	dptr += l2_len;
 
-	if (sess_priv.mode == ROC_IE_SA_MODE_TUNNEL) {
-		if (sess_priv.outer_ip_ver == ROC_IE_SA_IP_VERSION_4)
-			*((uint16_t *)(dptr - 2)) =
-				rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
-		else
-			*((uint16_t *)(dptr - 2)) =
-				rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
-	}
-
 	/* Move to our line */
 	laddr = LMT_OFF(lbase, *lnum, *loff ? 64 : 0);
 
@@ -574,15 +565,6 @@ cn10k_nix_prep_sec(struct rte_mbuf *m, uint64_t *cmd, uintptr_t *nixtx_addr,
 	cmd23 = vsetq_lane_u64((uintptr_t)m | 1, cmd23, 1);
 
 	dptr += l2_len;
-
-	if (sess_priv.mode == ROC_IE_SA_MODE_TUNNEL) {
-		if (sess_priv.outer_ip_ver == ROC_IE_SA_IP_VERSION_4)
-			*((uint16_t *)(dptr - 2)) =
-				rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
-		else
-			*((uint16_t *)(dptr - 2)) =
-				rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV6);
-	}
 
 	/* Move to our line */
 	laddr = LMT_OFF(lbase, *lnum, *loff ? 64 : 0);
@@ -2620,28 +2602,28 @@ again:
 			mbuf3 = (uint64_t *)tx_pkts[3];
 
 			if (cnxk_nix_prefree_seg((struct rte_mbuf *)mbuf0))
-				vsetq_lane_u64(0x80000, xmask01, 0);
+				xmask01 = vsetq_lane_u64(0x80000, xmask01, 0);
 			else
 				RTE_MEMPOOL_CHECK_COOKIES(
 					((struct rte_mbuf *)mbuf0)->pool,
 					(void **)&mbuf0, 1, 0);
 
 			if (cnxk_nix_prefree_seg((struct rte_mbuf *)mbuf1))
-				vsetq_lane_u64(0x80000, xmask01, 1);
+				xmask01 = vsetq_lane_u64(0x80000, xmask01, 1);
 			else
 				RTE_MEMPOOL_CHECK_COOKIES(
 					((struct rte_mbuf *)mbuf1)->pool,
 					(void **)&mbuf1, 1, 0);
 
 			if (cnxk_nix_prefree_seg((struct rte_mbuf *)mbuf2))
-				vsetq_lane_u64(0x80000, xmask23, 0);
+				xmask23 = vsetq_lane_u64(0x80000, xmask23, 0);
 			else
 				RTE_MEMPOOL_CHECK_COOKIES(
 					((struct rte_mbuf *)mbuf2)->pool,
 					(void **)&mbuf2, 1, 0);
 
 			if (cnxk_nix_prefree_seg((struct rte_mbuf *)mbuf3))
-				vsetq_lane_u64(0x80000, xmask23, 1);
+				xmask23 = vsetq_lane_u64(0x80000, xmask23, 1);
 			else
 				RTE_MEMPOOL_CHECK_COOKIES(
 					((struct rte_mbuf *)mbuf3)->pool,

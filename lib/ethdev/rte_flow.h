@@ -35,6 +35,7 @@
 #include <rte_l2tpv2.h>
 #include <rte_ppp.h>
 #include <rte_gre.h>
+#include <rte_macsec.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -626,6 +627,13 @@ enum rte_flow_item_type {
 	 * See struct rte_flow_item_gre_opt.
 	 */
 	RTE_FLOW_ITEM_TYPE_GRE_OPTION,
+
+	/**
+	 * Matches MACsec Ethernet Header.
+	 *
+	 * See struct rte_flow_item_macsec.
+	 */
+	RTE_FLOW_ITEM_TYPE_MACSEC,
 };
 
 /**
@@ -1097,6 +1105,15 @@ struct rte_flow_item_gre_opt {
 	struct rte_gre_hdr_opt_checksum_rsvd checksum_rsvd;
 	struct rte_gre_hdr_opt_key key;
 	struct rte_gre_hdr_opt_sequence sequence;
+};
+
+/**
+ * RTE_FLOW_ITEM_TYPE_MACSEC.
+ *
+ * Matches MACsec header.
+ */
+struct rte_flow_item_macsec {
+	struct rte_macsec_hdr macsec_hdr;
 };
 
 /**
@@ -3538,6 +3555,7 @@ enum rte_flow_field_id {
 	RTE_FLOW_FIELD_VALUE,		/**< Immediate value. */
 	RTE_FLOW_FIELD_IPV4_ECN,	/**< IPv4 ECN. */
 	RTE_FLOW_FIELD_IPV6_ECN,	/**< IPv6 ECN. */
+	RTE_FLOW_FIELD_GTP_PSC_QFI,	/**< GTP QFI. */
 };
 
 /**
@@ -4743,6 +4761,11 @@ struct rte_flow_port_info {
 	 * @see RTE_FLOW_ACTION_TYPE_METER
 	 */
 	uint32_t max_nb_meters;
+	/**
+	 * Maximum number connection trackings.
+	 * @see RTE_FLOW_ACTION_TYPE_CONNTRACK
+	 */
+	uint32_t max_nb_conn_tracks;
 };
 
 /**
@@ -4812,6 +4835,11 @@ struct rte_flow_port_attr {
 	 * @see RTE_FLOW_ACTION_TYPE_METER
 	 */
 	uint32_t nb_meters;
+	/**
+	 * Number of connection trackings to configure.
+	 * @see RTE_FLOW_ACTION_TYPE_CONNTRACK
+	 */
+	uint32_t nb_conn_tracks;
 };
 
 /**
@@ -5453,6 +5481,51 @@ rte_flow_async_action_handle_update(uint16_t port_id,
 		const void *update,
 		void *user_data,
 		struct rte_flow_error *error);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice.
+ *
+ * Enqueue indirect action query operation.
+ *
+ * Retrieve action-specific data such as counters.
+ * Data is gathered by special action which may be present/referenced in
+ * more than one flow rule definition.
+ * Data will be available only when completion event returns.
+ *
+ * @see rte_flow_async_action_handle_query
+ *
+ * @param port_id
+ *   Port identifier of Ethernet device.
+ * @param[in] queue_id
+ *   Flow queue which is used to query the action.
+ * @param[in] op_attr
+ *   Indirect action update operation attributes.
+ * @param[in] action_handle
+ *   Handle for the action object to query.
+ * @param[in, out] data
+ *   Pointer to storage for the associated query data type.
+ *   The out data will be available only when completion event returns
+ *   from rte_flow_pull.
+ * @param[in] user_data
+ *   The user data that will be returned on the completion events.
+ * @param[out] error
+ *   Perform verbose error reporting if not NULL. PMDs initialize this
+ *   structure in case of error only.
+ *
+ * @return
+ *   0 on success, a negative errno value otherwise and rte_errno is set.
+ */
+__rte_experimental
+int
+rte_flow_async_action_handle_query(uint16_t port_id,
+		uint32_t queue_id,
+		const struct rte_flow_op_attr *op_attr,
+		const struct rte_flow_action_handle *action_handle,
+		void *data,
+		void *user_data,
+		struct rte_flow_error *error);
+
 #ifdef __cplusplus
 }
 #endif

@@ -594,7 +594,7 @@ cn10k_sso_fp_fns_set(struct rte_eventdev *event_dev)
 			}
 		}
 	}
-	event_dev->ca_enqueue = cn10k_sso_hws_ca_enq;
+	event_dev->ca_enqueue = cn10k_cpt_crypto_adapter_enqueue;
 
 	if (dev->tx_offloads & NIX_TX_MULTI_SEG_F)
 		CN10K_SET_EVDEV_ENQ_OP(dev, event_dev->txa_enqueue,
@@ -1025,7 +1025,8 @@ cn10k_crypto_adapter_caps_get(const struct rte_eventdev *event_dev,
 	CNXK_VALID_DEV_OR_ERR_RET(cdev->device, "crypto_cn10k");
 
 	*caps = RTE_EVENT_CRYPTO_ADAPTER_CAP_INTERNAL_PORT_OP_FWD |
-		RTE_EVENT_CRYPTO_ADAPTER_CAP_SESSION_PRIVATE_DATA;
+		RTE_EVENT_CRYPTO_ADAPTER_CAP_SESSION_PRIVATE_DATA |
+		RTE_EVENT_CRYPTO_ADAPTER_CAP_EVENT_VECTOR;
 
 	return 0;
 }
@@ -1034,12 +1035,10 @@ static int
 cn10k_crypto_adapter_qp_add(const struct rte_eventdev *event_dev,
 			    const struct rte_cryptodev *cdev,
 			    int32_t queue_pair_id,
-			    const struct rte_event *event)
+			    const struct rte_event_crypto_adapter_queue_conf *conf)
 {
 	struct cnxk_sso_evdev *dev = cnxk_sso_pmd_priv(event_dev);
 	int ret;
-
-	RTE_SET_USED(event);
 
 	CNXK_VALID_DEV_OR_ERR_RET(event_dev->dev, "event_cn10k");
 	CNXK_VALID_DEV_OR_ERR_RET(cdev->device, "crypto_cn10k");
@@ -1047,15 +1046,14 @@ cn10k_crypto_adapter_qp_add(const struct rte_eventdev *event_dev,
 	dev->is_ca_internal_port = 1;
 	cn10k_sso_fp_fns_set((struct rte_eventdev *)(uintptr_t)event_dev);
 
-	ret = cnxk_crypto_adapter_qp_add(event_dev, cdev, queue_pair_id);
+	ret = cnxk_crypto_adapter_qp_add(event_dev, cdev, queue_pair_id, conf);
 	cn10k_sso_set_priv_mem(event_dev, NULL, 0);
 
 	return ret;
 }
 
 static int
-cn10k_crypto_adapter_qp_del(const struct rte_eventdev *event_dev,
-			    const struct rte_cryptodev *cdev,
+cn10k_crypto_adapter_qp_del(const struct rte_eventdev *event_dev, const struct rte_cryptodev *cdev,
 			    int32_t queue_pair_id)
 {
 	CNXK_VALID_DEV_OR_ERR_RET(event_dev->dev, "event_cn10k");
@@ -1070,6 +1068,26 @@ cn10k_tim_caps_get(const struct rte_eventdev *evdev, uint64_t flags,
 {
 	return cnxk_tim_caps_get(evdev, flags, caps, ops,
 				 cn10k_sso_set_priv_mem);
+}
+
+static int
+cn10k_crypto_adapter_vec_limits(const struct rte_eventdev *event_dev,
+				const struct rte_cryptodev *cdev,
+				struct rte_event_crypto_adapter_vector_limits *limits)
+{
+	CNXK_VALID_DEV_OR_ERR_RET(event_dev->dev, "event_cn10k");
+	CNXK_VALID_DEV_OR_ERR_RET(cdev->device, "crypto_cn10k");
+
+	limits->log2_sz = false;
+	limits->min_sz = 0;
+	limits->max_sz = UINT16_MAX;
+	/* Unused timeout, in software implementation we aggregate all crypto
+	 * operations passed to the enqueue function
+	 */
+	limits->min_timeout_ns = 0;
+	limits->max_timeout_ns = 0;
+
+	return 0;
 }
 
 static struct eventdev_ops cn10k_sso_dev_ops = {
@@ -1109,6 +1127,11 @@ static struct eventdev_ops cn10k_sso_dev_ops = {
 	.crypto_adapter_caps_get = cn10k_crypto_adapter_caps_get,
 	.crypto_adapter_queue_pair_add = cn10k_crypto_adapter_qp_add,
 	.crypto_adapter_queue_pair_del = cn10k_crypto_adapter_qp_del,
+	.crypto_adapter_vector_limits_get = cn10k_crypto_adapter_vec_limits,
+
+	.xstats_get = cnxk_sso_xstats_get,
+	.xstats_reset = cnxk_sso_xstats_reset,
+	.xstats_get_names = cnxk_sso_xstats_get_names,
 
 	.dump = cnxk_sso_dump,
 	.dev_start = cn10k_sso_start,
@@ -1136,6 +1159,7 @@ cn10k_sso_init(struct rte_eventdev *event_dev)
 		return 0;
 	}
 
+	dev->gw_mode = CN10K_GW_MODE_PREF_WFE;
 	rc = cnxk_sso_init(event_dev);
 	if (rc < 0)
 		return rc;
