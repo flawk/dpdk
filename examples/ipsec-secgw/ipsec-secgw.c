@@ -234,7 +234,6 @@ struct lcore_conf lcore_conf[RTE_MAX_LCORE];
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
 		.mq_mode	= RTE_ETH_MQ_RX_RSS,
-		.split_hdr_size = 0,
 		.offloads = RTE_ETH_RX_OFFLOAD_CHECKSUM,
 	},
 	.rx_adv_conf = {
@@ -1693,8 +1692,6 @@ cryptodevs_init(uint16_t req_queue_num)
 		qp_conf.nb_descriptors = qp_desc_nb;
 		qp_conf.mp_session =
 			socket_ctx[dev_conf.socket_id].session_pool;
-		qp_conf.mp_session_private =
-			socket_ctx[dev_conf.socket_id].session_priv_pool;
 		for (qp = 0; qp < dev_conf.nb_queue_pairs; qp++)
 			if (rte_cryptodev_queue_pair_setup(cdev_id, qp,
 					&qp_conf, dev_conf.socket_id))
@@ -2113,38 +2110,6 @@ session_pool_init(struct socket_ctx *ctx, int32_t socket_id, size_t sess_sz)
 }
 
 static void
-session_priv_pool_init(struct socket_ctx *ctx, int32_t socket_id,
-	size_t sess_sz)
-{
-	char mp_name[RTE_MEMPOOL_NAMESIZE];
-	struct rte_mempool *sess_mp;
-	uint32_t nb_sess;
-
-	snprintf(mp_name, RTE_MEMPOOL_NAMESIZE,
-			"sess_mp_priv_%u", socket_id);
-	nb_sess = (get_nb_crypto_sessions() + CDEV_MP_CACHE_SZ *
-		rte_lcore_count());
-	nb_sess = RTE_MAX(nb_sess, CDEV_MP_CACHE_SZ *
-			CDEV_MP_CACHE_MULTIPLIER);
-	sess_mp = rte_mempool_create(mp_name,
-			nb_sess,
-			sess_sz,
-			CDEV_MP_CACHE_SZ,
-			0, NULL, NULL, NULL,
-			NULL, socket_id,
-			0);
-	ctx->session_priv_pool = sess_mp;
-
-	if (ctx->session_priv_pool == NULL)
-		rte_exit(EXIT_FAILURE,
-			"Cannot init session priv pool on socket %d\n",
-			socket_id);
-	else
-		printf("Allocated session priv pool on socket %d\n",
-			socket_id);
-}
-
-static void
 pool_init(struct socket_ctx *ctx, int32_t socket_id, int portid,
 	  uint32_t nb_mbuf)
 {
@@ -2501,12 +2466,8 @@ one_session_free(struct rte_ipsec_session *ips)
 		if (ips->crypto.ses == NULL)
 			return 0;
 
-		ret = rte_cryptodev_sym_session_clear(ips->crypto.dev_id,
-						      ips->crypto.ses);
-		if (ret)
-			return ret;
-
-		ret = rte_cryptodev_sym_session_free(ips->crypto.ses);
+		ret = rte_cryptodev_sym_session_free(ips->crypto.dev_id,
+				ips->crypto.ses);
 	} else {
 		/* Session has not been created */
 		if (ips->security.ctx == NULL || ips->security.ses == NULL)
@@ -3006,8 +2967,6 @@ main(int32_t argc, char **argv)
 			continue;
 
 		session_pool_init(&socket_ctx[socket_id], socket_id, sess_sz);
-		session_priv_pool_init(&socket_ctx[socket_id], socket_id,
-			sess_sz);
 	}
 	printf("Number of mbufs in packet pool %d\n", nb_bufs_in_pool);
 

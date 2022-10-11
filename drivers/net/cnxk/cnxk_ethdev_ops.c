@@ -69,6 +69,9 @@ cnxk_nix_info_get(struct rte_eth_dev *eth_dev, struct rte_eth_dev_info *devinfo)
 	devinfo->dev_capa = RTE_ETH_DEV_CAPA_RUNTIME_RX_QUEUE_SETUP |
 			    RTE_ETH_DEV_CAPA_RUNTIME_TX_QUEUE_SETUP |
 			    RTE_ETH_DEV_CAPA_FLOW_RULE_KEEP;
+
+	devinfo->max_rx_mempools = CNXK_NIX_NUM_POOLS_MAX;
+
 	return 0;
 }
 
@@ -90,7 +93,6 @@ cnxk_nix_rx_burst_mode_get(struct rte_eth_dev *eth_dev, uint16_t queue_id,
 		{RTE_ETH_RX_OFFLOAD_QINQ_STRIP, " QinQ VLAN Strip,"},
 		{RTE_ETH_RX_OFFLOAD_OUTER_IPV4_CKSUM, " Outer IPv4 Checksum,"},
 		{RTE_ETH_RX_OFFLOAD_MACSEC_STRIP, " MACsec Strip,"},
-		{RTE_ETH_RX_OFFLOAD_HEADER_SPLIT, " Header Split,"},
 		{RTE_ETH_RX_OFFLOAD_VLAN_FILTER, " VLAN Filter,"},
 		{RTE_ETH_RX_OFFLOAD_VLAN_EXTEND, " VLAN Extend,"},
 		{RTE_ETH_RX_OFFLOAD_SCATTER, " Scattered,"},

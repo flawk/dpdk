@@ -1128,6 +1128,12 @@ rte_eal_init(int argc, char **argv)
 		return -1;
 	}
 
+	if (rte_eal_iova_mode() == RTE_IOVA_PA && !RTE_IOVA_AS_PA) {
+		rte_eal_init_alert("Cannot use IOVA as 'PA' as it is disabled during build");
+		rte_errno = EINVAL;
+		return -1;
+	}
+
 	RTE_LOG(INFO, EAL, "Selected IOVA mode '%s'\n",
 		rte_eal_iova_mode() == RTE_IOVA_PA ? "PA" : "VA");
 
@@ -1363,6 +1369,7 @@ rte_eal_cleanup(void)
 	vfio_mp_sync_cleanup();
 #endif
 	rte_mp_channel_cleanup();
+	eal_bus_cleanup();
 	rte_trace_save();
 	eal_trace_fini();
 	/* after this point, any DPDK pointers will become dangling */

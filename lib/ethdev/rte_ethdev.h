@@ -160,6 +160,7 @@ extern "C" {
 #define RTE_ETHDEV_DEBUG_TX
 #endif
 
+#include <rte_cman.h>
 #include <rte_compat.h>
 #include <rte_log.h>
 #include <rte_interrupts.h>
@@ -412,7 +413,6 @@ struct rte_eth_rxmode {
 	uint32_t mtu;  /**< Requested MTU. */
 	/** Maximum allowed size of LRO aggregated packet. */
 	uint32_t max_lro_pkt_size;
-	uint16_t split_hdr_size;  /**< hdr buf size (header_split enabled).*/
 	/**
 	 * Per-port Rx offloads to be set using RTE_ETH_RX_OFFLOAD_* flags.
 	 * Only offloads set on rx_offload_capa field on rte_eth_dev_info
@@ -994,6 +994,9 @@ struct rte_eth_txmode {
  *   specified in the first array element, the second buffer, from the
  *   pool in the second element, and so on.
  *
+ * - The proto_hdrs in the elements define the split position of
+ *   received packets.
+ *
  * - The offsets from the segment description elements specify
  *   the data offset from the buffer beginning except the first mbuf.
  *   The first segment offset is added with RTE_PKTMBUF_HEADROOM.
@@ -1015,12 +1018,44 @@ struct rte_eth_txmode {
  *     - pool from the last valid element
  *     - the buffer size from this pool
  *     - zero offset
+ *
+ * - Length based buffer split:
+ *     - mp, length, offset should be configured.
+ *     - The proto_hdr field must be 0.
+ *
+ * - Protocol header based buffer split:
+ *     - mp, offset, proto_hdr should be configured.
+ *     - The length field must be 0.
+ *     - The proto_hdr field in the last segment should be 0.
+ *
+ * - When protocol header split is enabled, NIC may receive packets
+ *   which do not match all the protocol headers within the Rx segments.
+ *   At this point, NIC will have two possible split behaviors according to
+ *   matching results, one is exact match, another is longest match.
+ *   The split result of NIC must belong to one of them.
+ *   The exact match means NIC only do split when the packets exactly match all
+ *   the protocol headers in the segments.
+ *   Otherwise, the whole packet will be put into the last valid mempool.
+ *   The longest match means NIC will do split until packets mismatch
+ *   the protocol header in the segments.
+ *   The rest will be put into the last valid pool.
  */
 struct rte_eth_rxseg_split {
 	struct rte_mempool *mp; /**< Memory pool to allocate segment from. */
 	uint16_t length; /**< Segment data length, configures split point. */
 	uint16_t offset; /**< Data offset from beginning of mbuf data buffer. */
-	uint32_t reserved; /**< Reserved field. */
+	/**
+	 * proto_hdr defines a bit mask of the protocol sequence as RTE_PTYPE_*.
+	 * The last RTE_PTYPE* in the mask indicates the split position.
+	 *
+	 * If one protocol header is defined to split packets into two segments,
+	 * for non-tunneling packets, the complete protocol sequence should be defined.
+	 * For tunneling packets, for simplicity, only the tunnel and inner part of
+	 * complete protocol sequence is required.
+	 * If several protocol headers are defined to split packets into multi-segments,
+	 * the repeated parts of adjacent segments should be omitted.
+	 */
+	uint32_t proto_hdr;
 };
 
 /**
@@ -1067,6 +1102,28 @@ struct rte_eth_rxconf {
 	 */
 	union rte_eth_rxseg *rx_seg;
 
+	/**
+	 * Array of mempools to allocate Rx buffers from.
+	 *
+	 * This provides support for multiple mbuf pools per Rx queue.
+	 * The capability is reported in device info via positive
+	 * max_rx_mempools.
+	 *
+	 * It could be useful for more efficient usage of memory when an
+	 * application creates different mempools to steer the specific
+	 * size of the packet.
+	 *
+	 * If many mempools are specified, packets received using Rx
+	 * burst may belong to any provided mempool. From ethdev user point
+	 * of view it is undefined how PMD/NIC chooses mempool for a packet.
+	 *
+	 * If Rx scatter is enabled, a packet may be delivered using a chain
+	 * of mbufs obtained from single mempool or multiple mempools based
+	 * on the NIC implementation.
+	 */
+	struct rte_mempool **rx_mempools;
+	uint16_t rx_nmempool; /** < Number of Rx mempools */
+
 	uint64_t reserved_64s[2]; /**< Reserved for future fields */
 	void *reserved_ptrs[2];   /**< Reserved for future fields */
 };
@@ -1096,6 +1153,28 @@ struct rte_eth_txconf {
  * @warning
  * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
  *
+ * A structure used to return the Tx or Rx hairpin queue capabilities.
+ */
+struct rte_eth_hairpin_queue_cap {
+	/**
+	 * When set, PMD supports placing descriptors and/or data buffers
+	 * in dedicated device memory.
+	 */
+	uint32_t locked_device_memory:1;
+
+	/**
+	 * When set, PMD supports placing descriptors and/or data buffers
+	 * in host memory managed by DPDK.
+	 */
+	uint32_t rte_memory:1;
+
+	uint32_t reserved:30; /**< Reserved for future fields */
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
  * A structure used to return the hairpin capabilities that are supported.
  */
 struct rte_eth_hairpin_cap {
@@ -1106,6 +1185,8 @@ struct rte_eth_hairpin_cap {
 	/** Max number of Tx queues to be connected to one Rx queue. */
 	uint16_t max_tx_2_rx;
 	uint16_t max_nb_desc; /**< The max num of descriptors. */
+	struct rte_eth_hairpin_queue_cap rx_cap; /**< Rx hairpin queue capabilities. */
+	struct rte_eth_hairpin_queue_cap tx_cap; /**< Tx hairpin queue capabilities. */
 };
 
 #define RTE_ETH_MAX_HAIRPIN_PEERS 32
@@ -1149,11 +1230,51 @@ struct rte_eth_hairpin_conf {
 	 *   function after all the queues are set up properly and the ports are
 	 *   started. Also, the hairpin unbind function should be called
 	 *   accordingly before stopping a port that with hairpin configured.
-	 * - When clear, the PMD will try to enable the hairpin with the queues
+	 * - When cleared, the PMD will try to enable the hairpin with the queues
 	 *   configured automatically during port start.
 	 */
 	uint32_t manual_bind:1;
-	uint32_t reserved:14; /**< Reserved bits. */
+
+	/**
+	 * Use locked device memory as a backing storage.
+	 *
+	 * - When set, PMD will attempt place descriptors and/or data buffers
+	 *   in dedicated device memory.
+	 * - When cleared, PMD will use default memory type as a backing storage.
+	 *   Please refer to PMD documentation for details.
+	 *
+	 * API user should check if PMD supports this configuration flag using
+	 * @see rte_eth_dev_hairpin_capability_get.
+	 */
+	uint32_t use_locked_device_memory:1;
+
+	/**
+	 * Use DPDK memory as backing storage.
+	 *
+	 * - When set, PMD will attempt place descriptors and/or data buffers
+	 *   in host memory managed by DPDK.
+	 * - When cleared, PMD will use default memory type as a backing storage.
+	 *   Please refer to PMD documentation for details.
+	 *
+	 * API user should check if PMD supports this configuration flag using
+	 * @see rte_eth_dev_hairpin_capability_get.
+	 */
+	uint32_t use_rte_memory:1;
+
+	/**
+	 * Force usage of hairpin memory configuration.
+	 *
+	 * - When set, PMD will attempt to use specified memory settings.
+	 *   If resource allocation fails, then hairpin queue allocation
+	 *   will result in an error.
+	 * - When clear, PMD will attempt to use specified memory settings.
+	 *   If resource allocation fails, then PMD will retry
+	 *   allocation with default configuration.
+	 */
+	uint32_t force_memory:1;
+
+	uint32_t reserved:11; /**< Reserved bits. */
+
 	struct rte_eth_hairpin_peer peers[RTE_ETH_MAX_HAIRPIN_PEERS];
 };
 
@@ -1379,7 +1500,6 @@ struct rte_eth_conf {
 #define RTE_ETH_RX_OFFLOAD_QINQ_STRIP       RTE_BIT64(5)
 #define RTE_ETH_RX_OFFLOAD_OUTER_IPV4_CKSUM RTE_BIT64(6)
 #define RTE_ETH_RX_OFFLOAD_MACSEC_STRIP     RTE_BIT64(7)
-#define RTE_ETH_RX_OFFLOAD_HEADER_SPLIT     RTE_BIT64(8)
 #define RTE_ETH_RX_OFFLOAD_VLAN_FILTER      RTE_BIT64(9)
 #define RTE_ETH_RX_OFFLOAD_VLAN_EXTEND      RTE_BIT64(10)
 #define RTE_ETH_RX_OFFLOAD_SCATTER          RTE_BIT64(13)
@@ -1615,6 +1735,13 @@ struct rte_eth_dev_info {
 	/** Configured number of Rx/Tx queues */
 	uint16_t nb_rx_queues; /**< Number of Rx queues. */
 	uint16_t nb_tx_queues; /**< Number of Tx queues. */
+	/**
+	 * Maximum number of Rx mempools supported per Rx queue.
+	 *
+	 * Value greater than 0 means that the driver supports Rx queue
+	 * mempools specification via rx_conf->rx_mempools.
+	 */
+	uint16_t max_rx_mempools;
 	/** Rx parameter recommendations */
 	struct rte_eth_dev_portconf default_rxportconf;
 	/** Tx parameter recommendations */
@@ -2444,9 +2571,11 @@ int rte_eth_hairpin_unbind(uint16_t tx_port, uint16_t rx_port);
  * @param port_id
  *   The port identifier of the Ethernet device
  * @return
- *   The NUMA socket ID to which the Ethernet device is connected or
- *   a default of zero if the socket could not be determined.
- *   -1 is returned is the port_id value is out of range.
+ *   - The NUMA socket ID which the Ethernet device is connected to.
+ *   - -1 (which translates to SOCKET_ID_ANY) if the socket could not be
+ *     determined. rte_errno is then set to:
+ *     - EINVAL is the port_id is invalid,
+ *     - 0 is the socket could not be determined,
  */
 int rte_eth_dev_socket_id(uint16_t port_id);
 
@@ -4262,7 +4391,7 @@ int rte_eth_dev_uc_all_hash_table_set(uint16_t port_id, uint8_t on);
  *   - (-EINVAL) if bad parameter.
  */
 int rte_eth_set_queue_rate_limit(uint16_t port_id, uint16_t queue_idx,
-			uint16_t tx_rate);
+			uint32_t tx_rate);
 
 /**
  * Configuration of Receive Side Scaling hash computation of Ethernet device.
@@ -5314,6 +5443,224 @@ typedef struct {
 __rte_experimental
 int rte_eth_dev_priv_dump(uint16_t port_id, FILE *file);
 
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Dump ethdev Rx descriptor info to a file.
+ *
+ * This API is used for debugging, not a dataplane API.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param queue_id
+ *   A Rx queue identifier on this port.
+ * @param offset
+ *  The offset of the descriptor starting from tail. (0 is the next
+ *  packet to be received by the driver).
+ * @param num
+ *   The number of the descriptors to dump.
+ * @param file
+ *   A pointer to a file for output.
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+__rte_experimental
+int rte_eth_rx_descriptor_dump(uint16_t port_id, uint16_t queue_id,
+			       uint16_t offset, uint16_t num, FILE *file);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Dump ethdev Tx descriptor info to a file.
+ *
+ * This API is used for debugging, not a dataplane API.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param queue_id
+ *   A Tx queue identifier on this port.
+ * @param offset
+ *  The offset of the descriptor starting from tail. (0 is the place where
+ *  the next packet will be send).
+ * @param num
+ *   The number of the descriptors to dump.
+ * @param file
+ *   A pointer to a file for output.
+ * @return
+ *   - On success, zero.
+ *   - On failure, a negative value.
+ */
+__rte_experimental
+int rte_eth_tx_descriptor_dump(uint16_t port_id, uint16_t queue_id,
+			       uint16_t offset, uint16_t num, FILE *file);
+
+
+/* Congestion management */
+
+/** Enumerate list of ethdev congestion management objects */
+enum rte_eth_cman_obj {
+	/** Congestion management based on Rx queue depth */
+	RTE_ETH_CMAN_OBJ_RX_QUEUE = RTE_BIT32(0),
+	/**
+	 * Congestion management based on mempool depth associated with Rx queue
+	 * @see rte_eth_rx_queue_setup()
+	 */
+	RTE_ETH_CMAN_OBJ_RX_QUEUE_MEMPOOL = RTE_BIT32(1),
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this structure may change, or be removed, without prior notice
+ *
+ * A structure used to retrieve information of ethdev congestion management.
+ */
+struct rte_eth_cman_info {
+	/**
+	 * Set of supported congestion management modes
+	 * @see enum rte_cman_mode
+	 */
+	uint64_t modes_supported;
+	/**
+	 * Set of supported congestion management objects
+	 * @see enum rte_eth_cman_obj
+	 */
+	uint64_t objs_supported;
+	/**
+	 * Reserved for future fields. Always returned as 0 when
+	 * rte_eth_cman_info_get() is invoked
+	 */
+	uint8_t rsvd[8];
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this structure may change, or be removed, without prior notice
+ *
+ * A structure used to configure the ethdev congestion management.
+ */
+struct rte_eth_cman_config {
+	/** Congestion management object */
+	enum rte_eth_cman_obj obj;
+	/** Congestion management mode */
+	enum rte_cman_mode mode;
+	union {
+		/**
+		 * Rx queue to configure congestion management.
+		 *
+		 * Valid when object is RTE_ETH_CMAN_OBJ_RX_QUEUE or
+		 * RTE_ETH_CMAN_OBJ_RX_QUEUE_MEMPOOL.
+		 */
+		uint16_t rx_queue;
+		/**
+		 * Reserved for future fields.
+		 * It must be set to 0 when rte_eth_cman_config_set() is invoked
+		 * and will be returned as 0 when rte_eth_cman_config_get() is
+		 * invoked.
+		 */
+		uint8_t rsvd_obj_params[4];
+	} obj_param;
+	union {
+		/**
+		 * RED configuration parameters.
+		 *
+		 * Valid when mode is RTE_CMAN_RED.
+		 */
+		struct rte_cman_red_params red;
+		/**
+		 * Reserved for future fields.
+		 * It must be set to 0 when rte_eth_cman_config_set() is invoked
+		 * and will be returned as 0 when rte_eth_cman_config_get() is
+		 * invoked.
+		 */
+		uint8_t rsvd_mode_params[4];
+	} mode_param;
+};
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Retrieve the information for ethdev congestion management
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param info
+ *   A pointer to a structure of type *rte_eth_cman_info* to be filled with
+ *   the information about congestion management.
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if support for cman_info_get does not exist.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if bad parameter.
+ */
+__rte_experimental
+int rte_eth_cman_info_get(uint16_t port_id, struct rte_eth_cman_info *info);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Initialize the ethdev congestion management configuration structure with default values.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param config
+ *   A pointer to a structure of type *rte_eth_cman_config* to be initialized
+ *   with default value.
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if support for cman_config_init does not exist.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if bad parameter.
+ */
+__rte_experimental
+int rte_eth_cman_config_init(uint16_t port_id, struct rte_eth_cman_config *config);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Configure ethdev congestion management
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param config
+ *   A pointer to a structure of type *rte_eth_cman_config* to be configured.
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if support for cman_config_set does not exist.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if bad parameter.
+ */
+__rte_experimental
+int rte_eth_cman_config_set(uint16_t port_id, const struct rte_eth_cman_config *config);
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
+ *
+ * Retrieve the applied ethdev congestion management parameters for the given port.
+ *
+ * @param port_id
+ *   The port identifier of the Ethernet device.
+ * @param config
+ *   A pointer to a structure of type *rte_eth_cman_config* to retrieve
+ *   congestion management parameters for the given object.
+ *   Application must fill all parameters except mode_param parameter in
+ *   struct rte_eth_cman_config.
+ *
+ * @return
+ *   - (0) if successful.
+ *   - (-ENOTSUP) if support for cman_config_get does not exist.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if bad parameter.
+ */
+__rte_experimental
+int rte_eth_cman_config_get(uint16_t port_id, struct rte_eth_cman_config *config);
+
 #include <rte_ethdev_core.h>
 
 /**
@@ -6024,6 +6371,37 @@ rte_eth_tx_buffer(uint16_t port_id, uint16_t queue_id,
 
 	return rte_eth_tx_buffer_flush(port_id, queue_id, buffer);
 }
+
+/**
+ * @warning
+ * @b EXPERIMENTAL: this API may change without prior notice
+ *
+ * Get supported header protocols to split on Rx.
+ *
+ * When a packet type is announced to be split,
+ * it *must* be supported by the PMD.
+ * For instance, if eth-ipv4, eth-ipv4-udp is announced,
+ * the PMD must return the following packet types for these packets:
+ * - Ether/IPv4             -> RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4
+ * - Ether/IPv4/UDP         -> RTE_PTYPE_L2_ETHER | RTE_PTYPE_L3_IPV4 | RTE_PTYPE_L4_UDP
+ *
+ * @param port_id
+ *   The port identifier of the device.
+ * @param[out] ptypes
+ *   An array pointer to store supported protocol headers, allocated by caller.
+ *   These ptypes are composed with RTE_PTYPE_*.
+ * @param num
+ *   Size of the array pointed by param ptypes.
+ * @return
+ *   - (>=0) Number of supported ptypes. If the number of types exceeds num,
+ *           only num entries will be filled into the ptypes array,
+ *           but the full count of supported ptypes will be returned.
+ *   - (-ENOTSUP) if header protocol is not supported by device.
+ *   - (-ENODEV) if *port_id* invalid.
+ *   - (-EINVAL) if bad parameter.
+ */
+__rte_experimental
+int rte_eth_buffer_split_get_supported_hdr_ptypes(uint16_t port_id, uint32_t *ptypes, int num);
 
 #ifdef __cplusplus
 }

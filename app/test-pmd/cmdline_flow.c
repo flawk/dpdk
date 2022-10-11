@@ -54,6 +54,7 @@ enum index {
 	COMMON_GROUP_ID,
 	COMMON_PRIORITY_LEVEL,
 	COMMON_INDIRECT_ACTION_ID,
+	COMMON_PROFILE_ID,
 	COMMON_POLICY_ID,
 	COMMON_FLEX_HANDLE,
 	COMMON_FLEX_TOKEN,
@@ -459,6 +460,9 @@ enum index {
 	ITEM_PPP_ADDR,
 	ITEM_PPP_CTRL,
 	ITEM_PPP_PROTO_ID,
+	ITEM_METER,
+	ITEM_METER_COLOR,
+	ITEM_METER_COLOR_NAME,
 
 	/* Validate/create actions. */
 	ACTIONS,
@@ -503,14 +507,15 @@ enum index {
 	ACTION_METER_COLOR_YELLOW,
 	ACTION_METER_COLOR_RED,
 	ACTION_METER_ID,
-	ACTION_OF_SET_MPLS_TTL,
-	ACTION_OF_SET_MPLS_TTL_MPLS_TTL,
-	ACTION_OF_DEC_MPLS_TTL,
-	ACTION_OF_SET_NW_TTL,
-	ACTION_OF_SET_NW_TTL_NW_TTL,
+	ACTION_METER_MARK,
+	ACTION_METER_PROFILE,
+	ACTION_METER_PROFILE_ID2PTR,
+	ACTION_METER_POLICY,
+	ACTION_METER_POLICY_ID2PTR,
+	ACTION_METER_COLOR_MODE,
+	ACTION_METER_INIT_COLOR,
+	ACTION_METER_STATE,
 	ACTION_OF_DEC_NW_TTL,
-	ACTION_OF_COPY_TTL_OUT,
-	ACTION_OF_COPY_TTL_IN,
 	ACTION_OF_POP_VLAN,
 	ACTION_OF_PUSH_VLAN,
 	ACTION_OF_PUSH_VLAN_ETHERTYPE,
@@ -610,6 +615,7 @@ enum index {
 	ACTION_PORT_REPRESENTOR_PORT_ID,
 	ACTION_REPRESENTED_PORT,
 	ACTION_REPRESENTED_PORT_ETHDEV_PORT_ID,
+	ACTION_SEND_TO_KERNEL,
 };
 
 /** Maximum size for pattern in struct rte_flow_item_raw. */
@@ -796,7 +802,11 @@ static const char *const modify_field_ids[] = {
 	"udp_port_src", "udp_port_dst",
 	"vxlan_vni", "geneve_vni", "gtp_teid",
 	"tag", "mark", "meta", "pointer", "value",
-	"ipv4_ecn", "ipv6_ecn", "gtp_psc_qfi", NULL
+	"ipv4_ecn", "ipv6_ecn", "gtp_psc_qfi", "meter_color", NULL
+};
+
+static const char *const meter_colors[] = {
+	"green", "yellow", "red", "all", NULL
 };
 
 /** Maximum number of subsequent tokens and arguments on the stack. */
@@ -1337,6 +1347,7 @@ static const enum index next_item[] = {
 	ITEM_FLEX,
 	ITEM_L2TPV2,
 	ITEM_PPP,
+	ITEM_METER,
 	END_SET,
 	ZERO,
 };
@@ -1797,6 +1808,12 @@ static const enum index item_ppp[] = {
 	ZERO,
 };
 
+static const enum index item_meter[] = {
+	ITEM_METER_COLOR,
+	ITEM_NEXT,
+	ZERO,
+};
+
 static const enum index next_action[] = {
 	ACTION_END,
 	ACTION_VOID,
@@ -1813,12 +1830,8 @@ static const enum index next_action[] = {
 	ACTION_PORT_ID,
 	ACTION_METER,
 	ACTION_METER_COLOR,
-	ACTION_OF_SET_MPLS_TTL,
-	ACTION_OF_DEC_MPLS_TTL,
-	ACTION_OF_SET_NW_TTL,
+	ACTION_METER_MARK,
 	ACTION_OF_DEC_NW_TTL,
-	ACTION_OF_COPY_TTL_OUT,
-	ACTION_OF_COPY_TTL_IN,
 	ACTION_OF_POP_VLAN,
 	ACTION_OF_PUSH_VLAN,
 	ACTION_OF_SET_VLAN_VID,
@@ -1864,6 +1877,7 @@ static const enum index next_action[] = {
 	ACTION_CONNTRACK_UPDATE,
 	ACTION_PORT_REPRESENTOR,
 	ACTION_REPRESENTED_PORT,
+	ACTION_SEND_TO_KERNEL,
 	ZERO,
 };
 
@@ -1922,14 +1936,12 @@ static const enum index action_meter_color[] = {
 	ZERO,
 };
 
-static const enum index action_of_set_mpls_ttl[] = {
-	ACTION_OF_SET_MPLS_TTL_MPLS_TTL,
-	ACTION_NEXT,
-	ZERO,
-};
-
-static const enum index action_of_set_nw_ttl[] = {
-	ACTION_OF_SET_NW_TTL_NW_TTL,
+static const enum index action_meter_mark[] = {
+	ACTION_METER_PROFILE,
+	ACTION_METER_POLICY,
+	ACTION_METER_COLOR_MODE,
+	ACTION_METER_INIT_COLOR,
+	ACTION_METER_STATE,
 	ACTION_NEXT,
 	ZERO,
 };
@@ -2357,6 +2369,17 @@ static int parse_ia_id2ptr(struct context *ctx, const struct token *token,
 static int parse_mp(struct context *, const struct token *,
 		    const char *, unsigned int,
 		    void *, unsigned int);
+static int parse_meter_profile_id2ptr(struct context *ctx,
+				      const struct token *token,
+				      const char *str, unsigned int len,
+				      void *buf, unsigned int size);
+static int parse_meter_policy_id2ptr(struct context *ctx,
+				     const struct token *token,
+				     const char *str, unsigned int len,
+				     void *buf, unsigned int size);
+static int parse_meter_color(struct context *ctx, const struct token *token,
+			     const char *str, unsigned int len, void *buf,
+			     unsigned int size);
 static int comp_none(struct context *, const struct token *,
 		     unsigned int, char *, unsigned int);
 static int comp_boolean(struct context *, const struct token *,
@@ -2387,6 +2410,8 @@ static int comp_table_id(struct context *, const struct token *,
 			 unsigned int, char *, unsigned int);
 static int comp_queue_id(struct context *, const struct token *,
 			 unsigned int, char *, unsigned int);
+static int comp_meter_color(struct context *, const struct token *,
+			    unsigned int, char *, unsigned int);
 
 /** Token definitions. */
 static const struct token token_list[] = {
@@ -2513,6 +2538,13 @@ static const struct token token_list[] = {
 		.name = "{indirect_action_id}",
 		.type = "INDIRECT_ACTION_ID",
 		.help = "indirect action id",
+		.call = parse_int,
+		.comp = comp_none,
+	},
+	[COMMON_PROFILE_ID] = {
+		.name = "{profile_id}",
+		.type = "PROFILE_ID",
+		.help = "profile id",
 		.call = parse_int,
 		.comp = comp_none,
 	},
@@ -5038,6 +5070,29 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_ppp,
 					hdr.proto_id)),
 	},
+	[ITEM_METER] = {
+		.name = "meter",
+		.help = "match meter color",
+		.priv = PRIV_ITEM(METER_COLOR,
+				  sizeof(struct rte_flow_item_meter_color)),
+		.next = NEXT(item_meter),
+		.call = parse_vc,
+	},
+	[ITEM_METER_COLOR] = {
+		.name = "color",
+		.help = "meter color",
+		.next = NEXT(item_meter,
+			     NEXT_ENTRY(ITEM_METER_COLOR_NAME),
+			     item_param),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_item_meter_color,
+					color)),
+	},
+	[ITEM_METER_COLOR_NAME] = {
+		.name = "color_name",
+		.help = "meter color name",
+		.call = parse_meter_color,
+		.comp = comp_meter_color,
+	},
 	/* Validate/create actions. */
 	[ACTIONS] = {
 		.name = "actions",
@@ -5336,66 +5391,66 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_meter, mtr_id)),
 		.call = parse_vc_conf,
 	},
-	[ACTION_OF_SET_MPLS_TTL] = {
-		.name = "of_set_mpls_ttl",
-		.help = "OpenFlow's OFPAT_SET_MPLS_TTL",
-		.priv = PRIV_ACTION
-			(OF_SET_MPLS_TTL,
-			 sizeof(struct rte_flow_action_of_set_mpls_ttl)),
-		.next = NEXT(action_of_set_mpls_ttl),
+	[ACTION_METER_MARK] = {
+		.name = "meter_mark",
+		.help = "meter the directed packets using profile and policy",
+		.priv = PRIV_ACTION(METER_MARK,
+				    sizeof(struct rte_flow_action_meter_mark)),
+		.next = NEXT(action_meter_mark),
 		.call = parse_vc,
 	},
-	[ACTION_OF_SET_MPLS_TTL_MPLS_TTL] = {
-		.name = "mpls_ttl",
-		.help = "MPLS TTL",
-		.next = NEXT(action_of_set_mpls_ttl,
-			     NEXT_ENTRY(COMMON_UNSIGNED)),
-		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_of_set_mpls_ttl,
-					mpls_ttl)),
+	[ACTION_METER_PROFILE] = {
+		.name = "mtr_profile",
+		.help = "meter profile id to use",
+		.next = NEXT(NEXT_ENTRY(ACTION_METER_PROFILE_ID2PTR)),
+		.args = ARGS(ARGS_ENTRY_ARB(0, sizeof(uint32_t))),
+	},
+	[ACTION_METER_PROFILE_ID2PTR] = {
+		.name = "{mtr_profile_id}",
+		.type = "PROFILE_ID",
+		.help = "meter profile id",
+		.next = NEXT(action_meter_mark),
+		.call = parse_meter_profile_id2ptr,
+		.comp = comp_none,
+	},
+	[ACTION_METER_POLICY] = {
+		.name = "mtr_policy",
+		.help = "meter policy id to use",
+		.next = NEXT(NEXT_ENTRY(ACTION_METER_POLICY_ID2PTR)),
+		ARGS(ARGS_ENTRY_ARB(0, sizeof(uint32_t))),
+	},
+	[ACTION_METER_POLICY_ID2PTR] = {
+		.name = "{mtr_policy_id}",
+		.type = "POLICY_ID",
+		.help = "meter policy id",
+		.next = NEXT(action_meter_mark),
+		.call = parse_meter_policy_id2ptr,
+		.comp = comp_none,
+	},
+	[ACTION_METER_COLOR_MODE] = {
+		.name = "mtr_color_mode",
+		.help = "meter color awareness mode",
+		.next = NEXT(action_meter_mark, NEXT_ENTRY(COMMON_UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_meter_mark, color_mode)),
 		.call = parse_vc_conf,
 	},
-	[ACTION_OF_DEC_MPLS_TTL] = {
-		.name = "of_dec_mpls_ttl",
-		.help = "OpenFlow's OFPAT_DEC_MPLS_TTL",
-		.priv = PRIV_ACTION(OF_DEC_MPLS_TTL, 0),
-		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
-		.call = parse_vc,
+	[ACTION_METER_INIT_COLOR] = {
+		.name = "mtr_init_color",
+		.help = "meter initial color",
+		.next = NEXT(action_meter_mark, NEXT_ENTRY(ITEM_METER_COLOR_NAME)),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_meter_mark, init_color)),
 	},
-	[ACTION_OF_SET_NW_TTL] = {
-		.name = "of_set_nw_ttl",
-		.help = "OpenFlow's OFPAT_SET_NW_TTL",
-		.priv = PRIV_ACTION
-			(OF_SET_NW_TTL,
-			 sizeof(struct rte_flow_action_of_set_nw_ttl)),
-		.next = NEXT(action_of_set_nw_ttl),
-		.call = parse_vc,
-	},
-	[ACTION_OF_SET_NW_TTL_NW_TTL] = {
-		.name = "nw_ttl",
-		.help = "IP TTL",
-		.next = NEXT(action_of_set_nw_ttl, NEXT_ENTRY(COMMON_UNSIGNED)),
-		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_of_set_nw_ttl,
-					nw_ttl)),
+	[ACTION_METER_STATE] = {
+		.name = "mtr_state",
+		.help = "meter state",
+		.next = NEXT(action_meter_mark, NEXT_ENTRY(COMMON_UNSIGNED)),
+		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_meter_mark, state)),
 		.call = parse_vc_conf,
 	},
 	[ACTION_OF_DEC_NW_TTL] = {
 		.name = "of_dec_nw_ttl",
 		.help = "OpenFlow's OFPAT_DEC_NW_TTL",
 		.priv = PRIV_ACTION(OF_DEC_NW_TTL, 0),
-		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
-		.call = parse_vc,
-	},
-	[ACTION_OF_COPY_TTL_OUT] = {
-		.name = "of_copy_ttl_out",
-		.help = "OpenFlow's OFPAT_COPY_TTL_OUT",
-		.priv = PRIV_ACTION(OF_COPY_TTL_OUT, 0),
-		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
-		.call = parse_vc,
-	},
-	[ACTION_OF_COPY_TTL_IN] = {
-		.name = "of_copy_ttl_in",
-		.help = "OpenFlow's OFPAT_COPY_TTL_IN",
-		.priv = PRIV_ACTION(OF_COPY_TTL_IN, 0),
 		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
 		.call = parse_vc,
 	},
@@ -5964,6 +6019,13 @@ static const struct token token_list[] = {
 		.args = ARGS(ARGS_ENTRY(struct rte_flow_action_modify_field,
 					width)),
 		.call = parse_vc_conf,
+	},
+	[ACTION_SEND_TO_KERNEL] = {
+		.name = "send_to_kernel",
+		.help = "send packets to kernel",
+		.priv = PRIV_ACTION(SEND_TO_KERNEL, 0),
+		.next = NEXT(NEXT_ENTRY(ACTION_NEXT)),
+		.call = parse_vc,
 	},
 	/* Top level command. */
 	[SET] = {
@@ -9657,6 +9719,68 @@ parse_ia_id2ptr(struct context *ctx, const struct token *token,
 	return ret;
 }
 
+static int
+parse_meter_profile_id2ptr(struct context *ctx, const struct token *token,
+		const char *str, unsigned int len,
+		void *buf, unsigned int size)
+{
+	struct rte_flow_action *action = ctx->object;
+	struct rte_flow_action_meter_mark *meter;
+	struct rte_flow_meter_profile *profile = NULL;
+	uint32_t id = 0;
+	int ret;
+
+	(void)buf;
+	(void)size;
+	ctx->objdata = 0;
+	ctx->object = &id;
+	ctx->objmask = NULL;
+	ret = parse_int(ctx, token, str, len, ctx->object, sizeof(id));
+	ctx->object = action;
+	if (ret != (int)len)
+		return ret;
+	/* set meter profile */
+	if (action) {
+		meter = (struct rte_flow_action_meter_mark *)
+			(uintptr_t)(action->conf);
+		profile = port_meter_profile_get_by_id(ctx->port, id);
+		meter->profile = profile;
+		ret = (profile) ? ret : -1;
+	}
+	return ret;
+}
+
+static int
+parse_meter_policy_id2ptr(struct context *ctx, const struct token *token,
+		const char *str, unsigned int len,
+		void *buf, unsigned int size)
+{
+	struct rte_flow_action *action = ctx->object;
+	struct rte_flow_action_meter_mark *meter;
+	struct rte_flow_meter_policy *policy = NULL;
+	uint32_t id = 0;
+	int ret;
+
+	(void)buf;
+	(void)size;
+	ctx->objdata = 0;
+	ctx->object = &id;
+	ctx->objmask = NULL;
+	ret = parse_int(ctx, token, str, len, ctx->object, sizeof(id));
+	ctx->object = action;
+	if (ret != (int)len)
+		return ret;
+	/* set meter policy */
+	if (action) {
+		meter = (struct rte_flow_action_meter_mark *)
+			(uintptr_t)(action->conf);
+		policy = port_meter_policy_get_by_id(ctx->port, id);
+		meter->policy = policy;
+		ret = (policy) ? ret : -1;
+	}
+	return ret;
+}
+
 /** Parse set command, initialize output buffer for subsequent tokens. */
 static int
 parse_set_raw_encap_decap(struct context *ctx, const struct token *token,
@@ -9817,6 +9941,30 @@ parse_flex_handle(struct context *ctx, const struct token *token,
 		return -1;
 	}
 	return ret;
+}
+
+/** Parse Meter color name */
+static int
+parse_meter_color(struct context *ctx, const struct token *token,
+		  const char *str, unsigned int len, void *buf,
+		  unsigned int size)
+{
+	struct rte_flow_item_meter_color *meter_color;
+	unsigned int i;
+
+	(void)token;
+	(void)buf;
+	(void)size;
+	for (i = 0; meter_colors[i]; ++i)
+		if (!strcmp_partial(meter_colors[i], str, len))
+			break;
+	if (!meter_colors[i])
+		return -1;
+	if (!ctx->object)
+		return len;
+	meter_color = ctx->object;
+	meter_color->color = (enum rte_color)i;
+	return len;
 }
 
 /** No completion. */
@@ -10108,6 +10256,20 @@ comp_queue_id(struct context *ctx, const struct token *token,
 	if (buf)
 		return -1;
 	return i;
+}
+
+/** Complete available Meter colors. */
+static int
+comp_meter_color(struct context *ctx, const struct token *token,
+		 unsigned int ent, char *buf, unsigned int size)
+{
+	RTE_SET_USED(ctx);
+	RTE_SET_USED(token);
+	if (!buf)
+		return RTE_DIM(meter_colors);
+	if (ent < RTE_DIM(meter_colors) - 1)
+		return strlcpy(buf, meter_colors[ent], size);
+	return -1;
 }
 
 /** Internal context. */
@@ -10726,6 +10888,9 @@ flow_item_default_mask(const struct rte_flow_item *item)
 		break;
 	case RTE_FLOW_ITEM_TYPE_PPP:
 		mask = &rte_flow_item_ppp_mask;
+		break;
+	case RTE_FLOW_ITEM_TYPE_METER_COLOR:
+		mask = &rte_flow_item_meter_color_mask;
 		break;
 	default:
 		break;

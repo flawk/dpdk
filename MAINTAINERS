@@ -79,20 +79,27 @@ Developers and Maintainers Tools
 M: Thomas Monjalon <thomas@monjalon.net>
 F: MAINTAINERS
 F: devtools/build-dict.sh
+F: devtools/check-abi.sh
+F: devtools/check-abi-version.sh
 F: devtools/check-doc-vs-code.sh
 F: devtools/check-dup-includes.sh
 F: devtools/check-maintainers.sh
 F: devtools/check-forbidden-tokens.awk
 F: devtools/check-git-log.sh
 F: devtools/check-spdx-tag.sh
+F: devtools/check-symbol-change.sh
 F: devtools/check-symbol-maps.sh
 F: devtools/checkpatches.sh
+F: devtools/gen-abi.sh
 F: devtools/get-maintainer.sh
 F: devtools/git-log-fixes.sh
 F: devtools/load-devel-config
 F: devtools/parse-flow-support.sh
 F: devtools/process-iwyu.py
+F: devtools/update-abi.sh
 F: devtools/update-patches.py
+F: devtools/update_version_map_abi.py
+F: devtools/libabigail.abignore
 F: devtools/words-case.txt
 F: license/
 F: .editorconfig
@@ -103,11 +110,13 @@ F: Makefile
 F: meson.build
 F: meson_options.txt
 F: config/
+F: buildtools/check-symbols.sh
 F: buildtools/chkincs/
 F: buildtools/call-sphinx-build.py
 F: buildtools/get-cpu-count.py
 F: buildtools/get-numa-count.py
 F: buildtools/list-dir-globs.py
+F: buildtools/map-list-symbol.sh
 F: buildtools/pkg-config/
 F: buildtools/symlink-drivers-solibs.sh
 F: buildtools/symlink-drivers-solibs.py
@@ -120,24 +129,6 @@ M: Michael Santana <maicolgabriel@hotmail.com>
 F: .travis.yml
 F: .github/workflows/build.yml
 F: .ci/
-
-ABI Policy & Versioning
-M: Ray Kinsella <mdr@ashroe.eu>
-F: lib/eal/include/rte_compat.h
-F: lib/eal/include/rte_function_versioning.h
-F: doc/guides/contributing/abi_*.rst
-F: doc/guides/rel_notes/deprecation.rst
-F: devtools/check-abi.sh
-F: devtools/check-abi-version.sh
-F: devtools/check-symbol-change.sh
-F: devtools/gen-abi.sh
-F: devtools/libabigail.abignore
-F: devtools/update-abi.sh
-F: devtools/update_version_map_abi.py
-F: buildtools/check-symbols.sh
-F: buildtools/map-list-symbol.sh
-F: drivers/*/*/*.map
-F: lib/*/*.map
 
 Driver information
 M: Neil Horman <nhorman@tuxdriver.com>
@@ -293,6 +284,12 @@ F: drivers/*/*/*_neon.*
 F: app/*/*_neon.*
 F: examples/*/*_neon.*
 F: examples/common/neon/
+
+LoongArch
+M: Min Zhou <zhoumin@loongson.cn>
+F: config/loongarch/
+F: doc/guides/linux_gsg/cross_build_dpdk_for_loongarch.rst
+F: lib/eal/loongarch/
 
 IBM POWER (alpha)
 M: David Christensen <drc@linux.vnet.ibm.com>
@@ -831,6 +828,12 @@ F: buildtools/options-ibverbs-static.sh
 F: doc/guides/nics/mlx5.rst
 F: doc/guides/nics/features/mlx5.ini
 
+Microsoft mana
+M: Long Li <longli@microsoft.com>
+F: drivers/net/mana/
+F: doc/guides/nics/mana.rst
+F: doc/guides/nics/features/mana.ini
+
 Microsoft vdev_netvsc - EXPERIMENTAL
 M: Matan Azrad <matan@nvidia.com>
 F: drivers/net/vdev_netvsc/
@@ -1009,7 +1012,6 @@ F: doc/guides/nics/fail_safe.rst
 F: doc/guides/nics/features/failsafe.ini
 
 Softnic PMD
-M: Jasvinder Singh <jasvinder.singh@intel.com>
 M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
 F: drivers/net/softnic/
 F: doc/guides/nics/softnic.rst
@@ -1472,7 +1474,6 @@ F: doc/guides/sample_app_ug/packet_ordering.rst
 
 Hierarchical scheduler
 M: Cristian Dumitrescu <cristian.dumitrescu@intel.com>
-M: Jasvinder Singh <jasvinder.singh@intel.com>
 F: lib/sched/
 F: doc/guides/prog_guide/qos_framework.rst
 F: app/test/test_pie.c

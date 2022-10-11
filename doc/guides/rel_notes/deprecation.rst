@@ -33,21 +33,12 @@ Deprecation Notices
   ``__atomic_thread_fence`` must be used for patches that need to be merged in
   20.08 onwards. This change will not introduce any performance degradation.
 
-* bus: The ``dev->device.numa_node`` field is set by each bus driver for
-  every device it manages to indicate on which NUMA node this device lies.
-  When this information is unknown, the assigned value is not consistent
-  across the bus drivers.
-  In DPDK 22.11, the default value will be set to -1 by all bus drivers
-  when the NUMA information is unavailable.
-
 * kni: The KNI kernel module and library are not recommended for use by new
   applications - other technologies such as virtio-user are recommended instead.
   Following the DPDK technical board
   `decision <https://mails.dpdk.org/archives/dev/2021-January/197077.html>`_
-  and `refinement <http://mails.dpdk.org/archives/dev/2022-June/243596.html>`_:
-
-  * Some deprecation warnings will be added in DPDK 22.11.
-  * The KNI kernel module, library and PMD will be removed from the DPDK 23.11.
+  and `refinement <https://mails.dpdk.org/archives/dev/2022-June/243596.html>`_,
+  the KNI kernel module, library and PMD will be removed from the DPDK 23.11 release.
 
 * lib: will fix extending some enum/define breaking the ABI. There are multiple
   samples in DPDK that enum/define terminated with a ``.*MAX.*`` value which is
@@ -62,17 +53,6 @@ Deprecation Notices
   Need to identify this kind of usages and fix in 20.11, otherwise this blocks
   us extending existing enum/define.
   One solution can be using a fixed size array instead of ``.*MAX.*`` value.
-
-* ethdev: The function ``rte_eth_set_queue_rate_limit`` takes ``rate`` in Mbps.
-  The queue rate is limited to 64 Gbps because declared as ``uint16_t``.
-  The ``rate`` parameter will be modified to ``uint32_t`` in DPDK 22.11
-  so that it can work for more than 64 Gbps.
-
-* ethdev: Since no single PMD supports ``RTE_ETH_RX_OFFLOAD_HEADER_SPLIT``
-  offload and the ``split_hdr_size`` field in structure ``rte_eth_rxmode``
-  to enable per-port header split, they will be removed in DPDK 22.11.
-  The per-queue Rx packet split offload ``RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT``
-  can still be used, and it is configured by ``rte_eth_rxseg_split``.
 
 * ethdev: Announce moving from dedicated modify function for each field,
   to using the general ``rte_flow_modify_field`` action.
@@ -94,16 +74,13 @@ Deprecation Notices
   will be limited to maximum 256 queues.
   Also compile time flag ``RTE_ETHDEV_QUEUE_STAT_CNTRS`` will be removed.
 
-* ethdev: Items and actions ``PF``, ``VF``, ``PHY_PORT``, ``PORT_ID`` are
-  deprecated as hard-to-use / ambiguous and will be removed in DPDK 22.11.
-
-* ethdev: The use of attributes ``ingress`` / ``egress`` in "transfer" flows
-  is deprecated as ambiguous with respect to the embedded switch. The use of
-  these attributes will become invalid starting from DPDK 22.11.
-
-* ethdev: Actions ``OF_SET_MPLS_TTL``, ``OF_DEC_MPLS_TTL``, ``OF_SET_NW_TTL``,
-  ``OF_COPY_TTL_OUT``, ``OF_COPY_TTL_IN`` are deprecated as not supported by
-  any PMD, so they will be removed in DPDK 22.11.
+* ethdev: Flow actions ``PF`` and ``VF`` have been deprecated since DPDK 21.11
+  and are yet to be removed. That still has not happened because there are net
+  drivers which support combined use of either action ``PF`` or action ``VF``
+  with action ``QUEUE``, namely, i40e, ixgbe and txgbe (L2 tunnel rule).
+  It is unclear whether it is acceptable to just drop support for
+  such a complex use case, so maintainers of the said drivers
+  should take a closer look at this and provide assistance.
 
 * ethdev: Actions ``OF_DEC_NW_TTL``, ``SET_IPV4_SRC``, ``SET_IPV4_DST``,
   ``SET_IPV6_SRC``, ``SET_IPV6_DST``, ``SET_TP_SRC``, ``SET_TP_DST``,
@@ -115,37 +92,7 @@ Deprecation Notices
   alternative is implemented.
   The legacy actions should be removed in DPDK 22.11.
 
-* ethdev: The enum ``rte_eth_event_ipsec_subtype`` will be extended to add
-  new subtype values ``RTE_ETH_EVENT_IPSEC_SA_PKT_EXPIRY``,
-  ``RTE_ETH_EVENT_IPSEC_SA_BYTE_HARD_EXPIRY`` and
-  ``RTE_ETH_EVENT_IPSEC_SA_PKT_HARD_EXPIRY`` in DPDK 22.11.
-
-* bbdev: ``RTE_BBDEV_OP_TYPE_COUNT`` terminating the ``rte_bbdev_op_type``
-  enum will be deprecated and instead use fixed array size when required
-  to allow for future enum extension.
-  Will extend API to support new operation type ``RTE_BBDEV_OP_FFT`` as per
-  this `RFC <https://patches.dpdk.org/project/dpdk/list/?series=22111>`__.
-  New members will be added in ``rte_bbdev_driver_info`` to expose
-  PMD queue topology inspired by
-  this `RFC <https://patches.dpdk.org/project/dpdk/list/?series=22076>`__.
-  New member will be added in ``rte_bbdev_driver_info`` to expose
-  the device status as per
-  this `RFC <https://patches.dpdk.org/project/dpdk/list/?series=23367>`__.
-  This should be updated in DPDK 22.11.
-
-* cryptodev: Hide structures ``rte_cryptodev_sym_session`` and
-  ``rte_cryptodev_asym_session`` to remove unnecessary indirection between
-  session and the private data of session. An opaque pointer can be exposed
-  directly to application which can be attached to the ``rte_crypto_op``.
-
 * cryptodev: The function ``rte_cryptodev_cb_fn`` will be updated
   to have another parameter ``qp_id`` to return the queue pair ID
   which got error interrupt to the application,
   so that application can reset that particular queue pair.
-
-* security: Hide structure ``rte_security_session`` and expose an opaque
-  pointer for the private data to the application which can be attached
-  to the packet while enqueuing.
-
-* raw/dpaa2_cmdif: The ``dpaa2_cmdif`` rawdev driver will be deprecated
-  in DPDK 22.11, as it is no longer in use, no active user known.

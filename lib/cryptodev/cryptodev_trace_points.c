@@ -39,12 +39,6 @@ RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_session_free,
 RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_asym_session_free,
 	lib.cryptodev.asym.free)
 
-RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_session_init,
-	lib.cryptodev.sym.init)
-
-RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_session_clear,
-	lib.cryptodev.sym.clear)
-
 RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_enqueue_burst,
 	lib.cryptodev.enq.burst)
 
@@ -140,9 +134,6 @@ RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_asym_xform_capability_check_optype,
 
 RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_cpu_crypto_process,
 	lib.cryptodev.sym.cpu.crypto.process)
-
-RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_get_existing_header_session_size,
-	lib.cryptodev.sym.get.existing.header.session.size)
 
 RTE_TRACE_POINT_REGISTER(rte_cryptodev_trace_sym_session_get_user_data,
 	lib.cryptodev.sym.session.get.user.data)

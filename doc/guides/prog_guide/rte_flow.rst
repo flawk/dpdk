@@ -204,13 +204,8 @@ When supported, this effectively enables an application to reroute traffic
 not necessarily intended for it (e.g. coming from or addressed to different
 physical ports, VFs or applications) at the device level.
 
-In "transfer" flows, the use of `Attribute: Traffic direction`_ in the sense of
-implicitly matching packets going to or going from the ethdev used to create
-flow rules is **deprecated**. `Attribute: Transfer`_ shifts the viewpoint to
-the embedded switch. In it, `Attribute: Traffic direction`_ is ambiguous as
-the switch serves many different endpoints. The application should match
-traffic originating from precise locations. To do so, it should
-use `Item: PORT_REPRESENTOR`_ and `Item: REPRESENTED_PORT`_.
+In "transfer" flows, the use of `Attribute: Traffic direction`_ in not allowed.
+One may use `Item: PORT_REPRESENTOR`_ and `Item: REPRESENTED_PORT`_ instead.
 
 Pattern item
 ~~~~~~~~~~~~
@@ -1542,6 +1537,13 @@ Matches a PPP header.
 - ``proto_id``: PPP protocol identifier.
 - Default ``mask`` matches addr, ctrl, proto_id.
 
+Item: ``METER_COLOR``
+^^^^^^^^^^^^^^^^^^^^^
+
+Matches Color Marker set by a Meter.
+
+- ``color``: Metering color marker.
+
 Actions
 ~~~~~~~
 
@@ -2116,57 +2118,6 @@ fields in the pattern items.
    | 1     | END      |
    +-------+----------+
 
-Action: ``OF_SET_MPLS_TTL``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-This action is deprecated. Consider `Action: MODIFY_FIELD`_.
-
-Implements ``OFPAT_SET_MPLS_TTL`` ("MPLS TTL") as defined by the `OpenFlow
-Switch Specification`_.
-
-.. _table_rte_flow_action_of_set_mpls_ttl:
-
-.. table:: OF_SET_MPLS_TTL
-
-   +--------------+----------+
-   | Field        | Value    |
-   +==============+==========+
-   | ``mpls_ttl`` | MPLS TTL |
-   +--------------+----------+
-
-Action: ``OF_DEC_MPLS_TTL``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-This action is deprecated. Consider `Action: MODIFY_FIELD`_.
-
-Implements ``OFPAT_DEC_MPLS_TTL`` ("decrement MPLS TTL") as defined by the
-`OpenFlow Switch Specification`_.
-
-.. _table_rte_flow_action_of_dec_mpls_ttl:
-
-.. table:: OF_DEC_MPLS_TTL
-
-   +---------------+
-   | Field         |
-   +===============+
-   | no properties |
-   +---------------+
-
-Action: ``OF_SET_NW_TTL``
-^^^^^^^^^^^^^^^^^^^^^^^^^
-This action is deprecated. Consider `Action: MODIFY_FIELD`_.
-
-Implements ``OFPAT_SET_NW_TTL`` ("IP TTL") as defined by the `OpenFlow
-Switch Specification`_.
-
-.. _table_rte_flow_action_of_set_nw_ttl:
-
-.. table:: OF_SET_NW_TTL
-
-   +------------+--------+
-   | Field      | Value  |
-   +============+========+
-   | ``nw_ttl`` | IP TTL |
-   +------------+--------+
-
 Action: ``OF_DEC_NW_TTL``
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 This is a legacy action. Consider `Action: MODIFY_FIELD`_ as alternative.
@@ -2177,41 +2128,6 @@ Implements ``OFPAT_DEC_NW_TTL`` ("decrement IP TTL") as defined by the
 .. _table_rte_flow_action_of_dec_nw_ttl:
 
 .. table:: OF_DEC_NW_TTL
-
-   +---------------+
-   | Field         |
-   +===============+
-   | no properties |
-   +---------------+
-
-Action: ``OF_COPY_TTL_OUT``
-^^^^^^^^^^^^^^^^^^^^^^^^^^^
-This action is deprecated. Consider `Action: MODIFY_FIELD`_.
-
-Implements ``OFPAT_COPY_TTL_OUT`` ("copy TTL "outwards" -- from
-next-to-outermost to outermost") as defined by the `OpenFlow Switch
-Specification`_.
-
-.. _table_rte_flow_action_of_copy_ttl_out:
-
-.. table:: OF_COPY_TTL_OUT
-
-   +---------------+
-   | Field         |
-   +===============+
-   | no properties |
-   +---------------+
-
-Action: ``OF_COPY_TTL_IN``
-^^^^^^^^^^^^^^^^^^^^^^^^^^
-This action is deprecated. Consider `Action: MODIFY_FIELD`_.
-
-Implements ``OFPAT_COPY_TTL_IN`` ("copy TTL "inwards" -- from outermost to
-next-to-outermost") as defined by the `OpenFlow Switch Specification`_.
-
-.. _table_rte_flow_action_of_copy_ttl_in:
-
-.. table:: OF_COPY_TTL_IN
 
    +---------------+
    | Field         |
@@ -3266,6 +3182,31 @@ at the opposite end of the "wire" leading to the ethdev.
 This action is meant to use the same structure as `Action: PORT_REPRESENTOR`_.
 
 See also `Item: REPRESENTED_PORT`_.
+
+Action: ``METER_MARK``
+^^^^^^^^^^^^^^^^^^^^^^
+
+Meters a packet stream and marks its packets with colors.
+
+Unlike the ``METER`` action, policing is optional and may be
+performed later with the help of the ``METER_COLOR`` item.
+The profile and/or policy objects have to be created
+using the rte_mtr_profile_add()/rte_mtr_policy_add() API.
+Pointers to these objects are used as action parameters
+and need to be retrieved using the rte_mtr_profile_get() API
+and rte_mtr_policy_get() API respectively.
+
+.. _table_rte_flow_action_meter_mark:
+
+.. table:: METER_MARK
+
+   +------------------+----------------------+
+   | Field            | Value                |
+   +==================+======================+
+   | ``profile``      | Meter profile object |
+   +------------------+----------------------+
+   | ``policy``       | Meter policy object  |
+   +------------------+----------------------+
 
 Negative types
 ~~~~~~~~~~~~~~

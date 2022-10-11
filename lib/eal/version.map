@@ -165,7 +165,6 @@ DPDK_23 {
 	rte_malloc_heap_memory_detach;
 	rte_malloc_heap_memory_remove;
 	rte_malloc_heap_socket_is_external;
-	rte_malloc_set_limit;
 	rte_malloc_socket;
 	rte_malloc_validate;
 	rte_malloc_virt2iova;
@@ -431,6 +430,16 @@ EXPERIMENTAL {
 	rte_thread_self;
 	rte_thread_set_affinity_by_id;
 	rte_thread_set_priority;
+
+	# added in 22.11
+	rte_thread_attr_get_affinity;
+	rte_thread_attr_init;
+	rte_thread_attr_set_affinity;
+	rte_thread_attr_set_priority;
+	rte_thread_create;
+	rte_thread_detach;
+	rte_thread_equal;
+	rte_thread_join;
 };
 
 INTERNAL {

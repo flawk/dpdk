@@ -94,7 +94,6 @@ static const struct {
 	RTE_RX_OFFLOAD_BIT2STR(QINQ_STRIP),
 	RTE_RX_OFFLOAD_BIT2STR(OUTER_IPV4_CKSUM),
 	RTE_RX_OFFLOAD_BIT2STR(MACSEC_STRIP),
-	RTE_RX_OFFLOAD_BIT2STR(HEADER_SPLIT),
 	RTE_RX_OFFLOAD_BIT2STR(VLAN_FILTER),
 	RTE_RX_OFFLOAD_BIT2STR(VLAN_EXTEND),
 	RTE_RX_OFFLOAD_BIT2STR(SCATTER),
@@ -562,8 +561,16 @@ rte_eth_dev_owner_get(const uint16_t port_id, struct rte_eth_dev_owner *owner)
 int
 rte_eth_dev_socket_id(uint16_t port_id)
 {
-	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -1);
-	return rte_eth_devices[port_id].data->numa_node;
+	int socket_id = SOCKET_ID_ANY;
+
+	if (!rte_eth_dev_is_valid_port(port_id)) {
+		rte_errno = EINVAL;
+	} else {
+		socket_id = rte_eth_devices[port_id].data->numa_node;
+		if (socket_id == SOCKET_ID_ANY)
+			rte_errno = 0;
+	}
+	return socket_id;
 }
 
 void *
@@ -643,7 +650,7 @@ rte_eth_dev_get_port_by_name(const char *name, uint16_t *port_id)
 	return -ENODEV;
 }
 
-static int
+int
 eth_err(uint16_t port_id, int ret)
 {
 	if (ret == 0)
@@ -1650,14 +1657,71 @@ rte_eth_dev_is_removed(uint16_t port_id)
 }
 
 static int
-rte_eth_rx_queue_check_split(const struct rte_eth_rxseg_split *rx_seg,
-			     uint16_t n_seg, uint32_t *mbp_buf_size,
-			     const struct rte_eth_dev_info *dev_info)
+rte_eth_check_rx_mempool(struct rte_mempool *mp, uint16_t offset,
+			 uint16_t min_length)
+{
+	uint16_t data_room_size;
+
+	/*
+	 * Check the size of the mbuf data buffer, this value
+	 * must be provided in the private data of the memory pool.
+	 * First check that the memory pool(s) has a valid private data.
+	 */
+	if (mp->private_data_size <
+			sizeof(struct rte_pktmbuf_pool_private)) {
+		RTE_ETHDEV_LOG(ERR, "%s private_data_size %u < %u\n",
+			mp->name, mp->private_data_size,
+			(unsigned int)
+			sizeof(struct rte_pktmbuf_pool_private));
+		return -ENOSPC;
+	}
+	data_room_size = rte_pktmbuf_data_room_size(mp);
+	if (data_room_size < offset + min_length) {
+		RTE_ETHDEV_LOG(ERR,
+			       "%s mbuf_data_room_size %u < %u (%u + %u)\n",
+			       mp->name, data_room_size,
+			       offset + min_length, offset, min_length);
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int
+eth_dev_buffer_split_get_supported_hdrs_helper(uint16_t port_id, uint32_t **ptypes)
+{
+	int cnt;
+
+	cnt = rte_eth_buffer_split_get_supported_hdr_ptypes(port_id, NULL, 0);
+	if (cnt <= 0)
+		return cnt;
+
+	*ptypes = malloc(sizeof(uint32_t) * cnt);
+	if (*ptypes == NULL)
+		return -ENOMEM;
+
+	cnt = rte_eth_buffer_split_get_supported_hdr_ptypes(port_id, *ptypes, cnt);
+	if (cnt <= 0) {
+		free(*ptypes);
+		*ptypes = NULL;
+	}
+	return cnt;
+}
+
+static int
+rte_eth_rx_queue_check_split(uint16_t port_id,
+			const struct rte_eth_rxseg_split *rx_seg,
+			uint16_t n_seg, uint32_t *mbp_buf_size,
+			const struct rte_eth_dev_info *dev_info)
 {
 	const struct rte_eth_rxseg_capa *seg_capa = &dev_info->rx_seg_capa;
 	struct rte_mempool *mp_first;
 	uint32_t offset_mask;
 	uint16_t seg_idx;
+	int ret = 0;
+	int ptype_cnt;
+	uint32_t *ptypes;
+	uint32_t prev_proto_hdrs = RTE_PTYPE_UNKNOWN;
+	int i;
 
 	if (n_seg > seg_capa->max_nseg) {
 		RTE_ETHDEV_LOG(ERR,
@@ -1671,52 +1735,126 @@ rte_eth_rx_queue_check_split(const struct rte_eth_rxseg_split *rx_seg,
 	 */
 	mp_first = rx_seg[0].mp;
 	offset_mask = RTE_BIT32(seg_capa->offset_align_log2) - 1;
+
+	ptypes = NULL;
+	ptype_cnt = eth_dev_buffer_split_get_supported_hdrs_helper(port_id, &ptypes);
+
 	for (seg_idx = 0; seg_idx < n_seg; seg_idx++) {
 		struct rte_mempool *mpl = rx_seg[seg_idx].mp;
 		uint32_t length = rx_seg[seg_idx].length;
 		uint32_t offset = rx_seg[seg_idx].offset;
+		uint32_t proto_hdr = rx_seg[seg_idx].proto_hdr;
 
 		if (mpl == NULL) {
 			RTE_ETHDEV_LOG(ERR, "null mempool pointer\n");
-			return -EINVAL;
+			ret = -EINVAL;
+			goto out;
 		}
 		if (seg_idx != 0 && mp_first != mpl &&
 		    seg_capa->multi_pools == 0) {
 			RTE_ETHDEV_LOG(ERR, "Receiving to multiple pools is not supported\n");
-			return -ENOTSUP;
+			ret = -ENOTSUP;
+			goto out;
 		}
 		if (offset != 0) {
 			if (seg_capa->offset_allowed == 0) {
 				RTE_ETHDEV_LOG(ERR, "Rx segmentation with offset is not supported\n");
-				return -ENOTSUP;
+				ret = -ENOTSUP;
+				goto out;
 			}
 			if (offset & offset_mask) {
 				RTE_ETHDEV_LOG(ERR, "Rx segmentation invalid offset alignment %u, %u\n",
 					       offset,
 					       seg_capa->offset_align_log2);
-				return -EINVAL;
+				ret = -EINVAL;
+				goto out;
 			}
 		}
-		if (mpl->private_data_size <
-			sizeof(struct rte_pktmbuf_pool_private)) {
-			RTE_ETHDEV_LOG(ERR,
-				       "%s private_data_size %u < %u\n",
-				       mpl->name, mpl->private_data_size,
-				       (unsigned int)sizeof
-					(struct rte_pktmbuf_pool_private));
-			return -ENOSPC;
-		}
+
 		offset += seg_idx != 0 ? 0 : RTE_PKTMBUF_HEADROOM;
 		*mbp_buf_size = rte_pktmbuf_data_room_size(mpl);
-		length = length != 0 ? length : *mbp_buf_size;
-		if (*mbp_buf_size < length + offset) {
-			RTE_ETHDEV_LOG(ERR,
-				       "%s mbuf_data_room_size %u < %u (segment length=%u + segment offset=%u)\n",
-				       mpl->name, *mbp_buf_size,
-				       length + offset, length, offset);
+		if (proto_hdr != 0) {
+			/* Split based on protocol headers. */
+			if (length != 0) {
+				RTE_ETHDEV_LOG(ERR,
+					"Do not set length split and protocol split within a segment\n"
+					);
+				ret = -EINVAL;
+				goto out;
+			}
+			if ((proto_hdr & prev_proto_hdrs) != 0) {
+				RTE_ETHDEV_LOG(ERR,
+					"Repeat with previous protocol headers or proto-split after length-based split\n"
+					);
+				ret = -EINVAL;
+				goto out;
+			}
+			if (ptype_cnt <= 0) {
+				RTE_ETHDEV_LOG(ERR,
+					"Port %u failed to get supported buffer split header protocols\n",
+					port_id);
+				ret = -ENOTSUP;
+				goto out;
+			}
+			for (i = 0; i < ptype_cnt; i++) {
+				if ((prev_proto_hdrs | proto_hdr) == ptypes[i])
+					break;
+			}
+			if (i == ptype_cnt) {
+				RTE_ETHDEV_LOG(ERR,
+					"Requested Rx split header protocols 0x%x is not supported.\n",
+					proto_hdr);
+				ret = -EINVAL;
+				goto out;
+			}
+			prev_proto_hdrs |= proto_hdr;
+		} else {
+			/* Split at fixed length. */
+			length = length != 0 ? length : *mbp_buf_size;
+			prev_proto_hdrs = RTE_PTYPE_ALL_MASK;
+		}
+
+		ret = rte_eth_check_rx_mempool(mpl, offset, length);
+		if (ret != 0)
+			goto out;
+	}
+out:
+	free(ptypes);
+	return ret;
+}
+
+static int
+rte_eth_rx_queue_check_mempools(struct rte_mempool **rx_mempools,
+			       uint16_t n_mempools, uint32_t *min_buf_size,
+			       const struct rte_eth_dev_info *dev_info)
+{
+	uint16_t pool_idx;
+	int ret;
+
+	if (n_mempools > dev_info->max_rx_mempools) {
+		RTE_ETHDEV_LOG(ERR,
+			       "Too many Rx mempools %u vs maximum %u\n",
+			       n_mempools, dev_info->max_rx_mempools);
+		return -EINVAL;
+	}
+
+	for (pool_idx = 0; pool_idx < n_mempools; pool_idx++) {
+		struct rte_mempool *mp = rx_mempools[pool_idx];
+
+		if (mp == NULL) {
+			RTE_ETHDEV_LOG(ERR, "null Rx mempool pointer\n");
 			return -EINVAL;
 		}
+
+		ret = rte_eth_check_rx_mempool(mp, RTE_PKTMBUF_HEADROOM,
+					       dev_info->min_rx_bufsize);
+		if (ret != 0)
+			return ret;
+
+		*min_buf_size = RTE_MIN(*min_buf_size,
+					rte_pktmbuf_data_room_size(mp));
 	}
+
 	return 0;
 }
 
@@ -1727,7 +1865,8 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		       struct rte_mempool *mp)
 {
 	int ret;
-	uint32_t mbp_buf_size;
+	uint64_t rx_offloads;
+	uint32_t mbp_buf_size = UINT32_MAX;
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
 	struct rte_eth_rxconf local_conf;
@@ -1747,54 +1886,43 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	if (ret != 0)
 		return ret;
 
+	rx_offloads = dev->data->dev_conf.rxmode.offloads;
+	if (rx_conf != NULL)
+		rx_offloads |= rx_conf->offloads;
+
+	/* Ensure that we have one and only one source of Rx buffers */
+	if ((mp != NULL) +
+	    (rx_conf != NULL && rx_conf->rx_nseg > 0) +
+	    (rx_conf != NULL && rx_conf->rx_nmempool > 0) != 1) {
+		RTE_ETHDEV_LOG(ERR,
+			       "Ambiguous Rx mempools configuration\n");
+		return -EINVAL;
+	}
+
 	if (mp != NULL) {
 		/* Single pool configuration check. */
-		if (rx_conf != NULL && rx_conf->rx_nseg != 0) {
-			RTE_ETHDEV_LOG(ERR,
-				       "Ambiguous segment configuration\n");
-			return -EINVAL;
-		}
-		/*
-		 * Check the size of the mbuf data buffer, this value
-		 * must be provided in the private data of the memory pool.
-		 * First check that the memory pool(s) has a valid private data.
-		 */
-		if (mp->private_data_size <
-				sizeof(struct rte_pktmbuf_pool_private)) {
-			RTE_ETHDEV_LOG(ERR, "%s private_data_size %u < %u\n",
-				mp->name, mp->private_data_size,
-				(unsigned int)
-				sizeof(struct rte_pktmbuf_pool_private));
-			return -ENOSPC;
-		}
+		ret = rte_eth_check_rx_mempool(mp, RTE_PKTMBUF_HEADROOM,
+					       dev_info.min_rx_bufsize);
+		if (ret != 0)
+			return ret;
+
 		mbp_buf_size = rte_pktmbuf_data_room_size(mp);
-		if (mbp_buf_size < dev_info.min_rx_bufsize +
-				   RTE_PKTMBUF_HEADROOM) {
-			RTE_ETHDEV_LOG(ERR,
-				       "%s mbuf_data_room_size %u < %u (RTE_PKTMBUF_HEADROOM=%u + min_rx_bufsize(dev)=%u)\n",
-				       mp->name, mbp_buf_size,
-				       RTE_PKTMBUF_HEADROOM +
-				       dev_info.min_rx_bufsize,
-				       RTE_PKTMBUF_HEADROOM,
-				       dev_info.min_rx_bufsize);
-			return -EINVAL;
-		}
-	} else {
+	} else if (rx_conf != NULL && rx_conf->rx_nseg > 0) {
 		const struct rte_eth_rxseg_split *rx_seg;
 		uint16_t n_seg;
 
 		/* Extended multi-segment configuration check. */
-		if (rx_conf == NULL || rx_conf->rx_seg == NULL || rx_conf->rx_nseg == 0) {
+		if (rx_conf->rx_seg == NULL) {
 			RTE_ETHDEV_LOG(ERR,
-				       "Memory pool is null and no extended configuration provided\n");
+				       "Memory pool is null and no multi-segment configuration provided\n");
 			return -EINVAL;
 		}
 
 		rx_seg = (const struct rte_eth_rxseg_split *)rx_conf->rx_seg;
 		n_seg = rx_conf->rx_nseg;
 
-		if (rx_conf->offloads & RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT) {
-			ret = rte_eth_rx_queue_check_split(rx_seg, n_seg,
+		if (rx_offloads & RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT) {
+			ret = rte_eth_rx_queue_check_split(port_id, rx_seg, n_seg,
 							   &mbp_buf_size,
 							   &dev_info);
 			if (ret != 0)
@@ -1803,6 +1931,22 @@ rte_eth_rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 			RTE_ETHDEV_LOG(ERR, "No Rx segmentation offload configured\n");
 			return -EINVAL;
 		}
+	} else if (rx_conf != NULL && rx_conf->rx_nmempool > 0) {
+		/* Extended multi-pool configuration check. */
+		if (rx_conf->rx_mempools == NULL) {
+			RTE_ETHDEV_LOG(ERR, "Memory pools array is null\n");
+			return -EINVAL;
+		}
+
+		ret = rte_eth_rx_queue_check_mempools(rx_conf->rx_mempools,
+						     rx_conf->rx_nmempool,
+						     &mbp_buf_size,
+						     &dev_info);
+		if (ret != 0)
+			return ret;
+	} else {
+		RTE_ETHDEV_LOG(ERR, "Missing Rx mempool configuration\n");
+		return -EINVAL;
 	}
 
 	/* Use default specified by driver, if nb_rx_desc is zero */
@@ -1959,6 +2103,28 @@ rte_eth_rx_hairpin_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		RTE_ETHDEV_LOG(ERR,
 			"Invalid value for number of peers for Rx queue(=%u), should be: <= %hu",
 			conf->peer_count, cap.max_rx_2_tx);
+		return -EINVAL;
+	}
+	if (conf->use_locked_device_memory && !cap.rx_cap.locked_device_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use locked device memory for Rx queue, which is not supported");
+		return -EINVAL;
+	}
+	if (conf->use_rte_memory && !cap.rx_cap.rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use DPDK memory for Rx queue, which is not supported");
+		return -EINVAL;
+	}
+	if (conf->use_locked_device_memory && conf->use_rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use mutually exclusive memory settings for Rx queue");
+		return -EINVAL;
+	}
+	if (conf->force_memory &&
+	    !conf->use_locked_device_memory &&
+	    !conf->use_rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to force Rx queue memory settings, but none is set");
 		return -EINVAL;
 	}
 	if (conf->peer_count == 0) {
@@ -2126,6 +2292,28 @@ rte_eth_tx_hairpin_queue_setup(uint16_t port_id, uint16_t tx_queue_id,
 		RTE_ETHDEV_LOG(ERR,
 			"Invalid value for number of peers for Tx queue(=%u), should be: <= %hu",
 			conf->peer_count, cap.max_tx_2_rx);
+		return -EINVAL;
+	}
+	if (conf->use_locked_device_memory && !cap.tx_cap.locked_device_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use locked device memory for Tx queue, which is not supported");
+		return -EINVAL;
+	}
+	if (conf->use_rte_memory && !cap.tx_cap.rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use DPDK memory for Tx queue, which is not supported");
+		return -EINVAL;
+	}
+	if (conf->use_locked_device_memory && conf->use_rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to use mutually exclusive memory settings for Tx queue");
+		return -EINVAL;
+	}
+	if (conf->force_memory &&
+	    !conf->use_locked_device_memory &&
+	    !conf->use_rte_memory) {
+		RTE_ETHDEV_LOG(ERR,
+			"Attempt to force Tx queue memory settings, but none is set");
 		return -EINVAL;
 	}
 	if (conf->peer_count == 0) {
@@ -4444,7 +4632,7 @@ rte_eth_dev_uc_all_hash_table_set(uint16_t port_id, uint8_t on)
 }
 
 int rte_eth_set_queue_rate_limit(uint16_t port_id, uint16_t queue_idx,
-					uint16_t tx_rate)
+					uint32_t tx_rate)
 {
 	struct rte_eth_dev *dev;
 	struct rte_eth_dev_info dev_info;
@@ -6043,6 +6231,91 @@ rte_eth_dev_priv_dump(uint16_t port_id, FILE *file)
 	if (*dev->dev_ops->eth_dev_priv_dump == NULL)
 		return -ENOTSUP;
 	return eth_err(port_id, (*dev->dev_ops->eth_dev_priv_dump)(dev, file));
+}
+
+int
+rte_eth_rx_descriptor_dump(uint16_t port_id, uint16_t queue_id,
+			   uint16_t offset, uint16_t num, FILE *file)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	dev = &rte_eth_devices[port_id];
+
+	if (queue_id >= dev->data->nb_rx_queues) {
+		RTE_ETHDEV_LOG(ERR, "Invalid Rx queue_id=%u\n", queue_id);
+		return -EINVAL;
+	}
+
+	if (file == NULL) {
+		RTE_ETHDEV_LOG(ERR, "Invalid file (NULL)\n");
+		return -EINVAL;
+	}
+
+	if (*dev->dev_ops->eth_rx_descriptor_dump == NULL)
+		return -ENOTSUP;
+
+	return eth_err(port_id, (*dev->dev_ops->eth_rx_descriptor_dump)(dev,
+						queue_id, offset, num, file));
+}
+
+int
+rte_eth_tx_descriptor_dump(uint16_t port_id, uint16_t queue_id,
+			   uint16_t offset, uint16_t num, FILE *file)
+{
+	struct rte_eth_dev *dev;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	dev = &rte_eth_devices[port_id];
+
+	if (queue_id >= dev->data->nb_tx_queues) {
+		RTE_ETHDEV_LOG(ERR, "Invalid Tx queue_id=%u\n", queue_id);
+		return -EINVAL;
+	}
+
+	if (file == NULL) {
+		RTE_ETHDEV_LOG(ERR, "Invalid file (NULL)\n");
+		return -EINVAL;
+	}
+
+	if (*dev->dev_ops->eth_tx_descriptor_dump == NULL)
+		return -ENOTSUP;
+
+	return eth_err(port_id, (*dev->dev_ops->eth_tx_descriptor_dump)(dev,
+						queue_id, offset, num, file));
+}
+
+int
+rte_eth_buffer_split_get_supported_hdr_ptypes(uint16_t port_id, uint32_t *ptypes, int num)
+{
+	int i, j;
+	struct rte_eth_dev *dev;
+	const uint32_t *all_types;
+
+	RTE_ETH_VALID_PORTID_OR_ERR_RET(port_id, -ENODEV);
+	dev = &rte_eth_devices[port_id];
+
+	if (ptypes == NULL && num > 0) {
+		RTE_ETHDEV_LOG(ERR,
+			"Cannot get ethdev port %u supported header protocol types to NULL when array size is non zero\n",
+			port_id);
+		return -EINVAL;
+	}
+
+	if (*dev->dev_ops->buffer_split_supported_hdr_ptypes_get == NULL)
+		return -ENOTSUP;
+	all_types = (*dev->dev_ops->buffer_split_supported_hdr_ptypes_get)(dev);
+
+	if (all_types == NULL)
+		return 0;
+
+	for (i = 0, j = 0; all_types[i] != RTE_PTYPE_UNKNOWN; ++i) {
+		if (j < num)
+			ptypes[j] = all_types[i];
+		j++;
+	}
+
+	return j;
 }
 
 RTE_LOG_REGISTER_DEFAULT(rte_eth_dev_logtype, INFO);

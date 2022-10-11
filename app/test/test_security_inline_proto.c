@@ -37,8 +37,8 @@ test_event_inline_ipsec(void)
 #define NB_ETHPORTS_USED		1
 #define MEMPOOL_CACHE_SIZE		32
 #define MAX_PKT_BURST			32
-#define RTE_TEST_RX_DESC_DEFAULT	1024
-#define RTE_TEST_TX_DESC_DEFAULT	1024
+#define RX_DESC_DEFAULT	1024
+#define TX_DESC_DEFAULT	1024
 #define RTE_PORT_ALL		(~(uint16_t)0x0)
 
 #define RX_PTHRESH 8 /**< Default values of RX prefetch threshold reg. */
@@ -66,14 +66,12 @@ extern struct ipsec_test_data pkt_aes_128_cbc_hmac_sha512;
 
 static struct rte_mempool *mbufpool;
 static struct rte_mempool *sess_pool;
-static struct rte_mempool *sess_priv_pool;
 /* ethernet addresses of ports */
 static struct rte_ether_addr ports_eth_addr[RTE_MAX_ETHPORTS];
 
 static struct rte_eth_conf port_conf = {
 	.rxmode = {
 		.mq_mode = RTE_ETH_MQ_RX_NONE,
-		.split_hdr_size = 0,
 		.offloads = RTE_ETH_RX_OFFLOAD_CHECKSUM |
 			    RTE_ETH_RX_OFFLOAD_SECURITY,
 	},
@@ -120,7 +118,7 @@ static struct rte_flow *default_flow[RTE_MAX_ETHPORTS];
 /* Create Inline IPsec session */
 static int
 create_inline_ipsec_session(struct ipsec_test_data *sa, uint16_t portid,
-		struct rte_security_session **sess, struct rte_security_ctx **ctx,
+		void **sess, struct rte_security_ctx **ctx,
 		uint32_t *ol_flags, const struct ipsec_test_flags *flags,
 		struct rte_security_session_conf *sess_conf)
 {
@@ -311,8 +309,7 @@ create_inline_ipsec_session(struct ipsec_test_data *sa, uint16_t portid,
 		setenv("ETH_SEC_IV_OVR", arr, 1);
 	}
 
-	*sess = rte_security_session_create(sec_ctx,
-				sess_conf, sess_pool, sess_priv_pool);
+	*sess = rte_security_session_create(sec_ctx, sess_conf, sess_pool);
 	if (*sess == NULL) {
 		printf("SEC Session init failed.\n");
 		return TEST_FAILED;
@@ -495,18 +492,6 @@ init_mempools(unsigned int nb_mbuf)
 			return TEST_FAILED;
 		}
 		printf("Allocated sess pool\n");
-	}
-	if (sess_priv_pool == NULL) {
-		snprintf(s, sizeof(s), "sess_priv_pool");
-		sess_priv_pool = rte_mempool_create(s, nb_sess, sess_sz,
-				MEMPOOL_CACHE_SIZE, 0,
-				NULL, NULL, NULL, NULL,
-				SOCKET_ID_ANY, 0);
-		if (sess_priv_pool == NULL) {
-			printf("Cannot init sess_priv pool\n");
-			return TEST_FAILED;
-		}
-		printf("Allocated sess_priv pool\n");
 	}
 
 	return 0;
@@ -709,8 +694,8 @@ static int
 test_ipsec_with_reassembly(struct reassembly_vector *vector,
 		const struct ipsec_test_flags *flags)
 {
-	struct rte_security_session *out_ses[ENCAP_DECAP_BURST_SZ] = {0};
-	struct rte_security_session *in_ses[ENCAP_DECAP_BURST_SZ] = {0};
+	void *out_ses[ENCAP_DECAP_BURST_SZ] = {0};
+	void *in_ses[ENCAP_DECAP_BURST_SZ] = {0};
 	struct rte_eth_ip_reassembly_params reass_capa = {0};
 	struct rte_security_session_conf sess_conf_out = {0};
 	struct rte_security_session_conf sess_conf_in = {0};
@@ -1046,12 +1031,12 @@ test_ipsec_inline_proto_process(struct ipsec_test_data *td,
 	struct rte_crypto_sym_xform auth = {0};
 	struct rte_crypto_sym_xform aead = {0};
 	struct sa_expiry_vector vector = {0};
-	struct rte_security_session *ses;
 	struct rte_security_ctx *ctx;
 	int nb_rx = 0, nb_sent;
 	uint32_t ol_flags;
 	int i, j = 0, ret;
 	bool outer_ipv4;
+	void *ses;
 
 	memset(rx_pkts_burst, 0, sizeof(rx_pkts_burst[0]) * nb_pkts);
 
@@ -1315,7 +1300,7 @@ test_ipsec_inline_proto_process_with_esn(struct ipsec_test_data td[],
 	struct rte_mbuf *rx_pkt = NULL;
 	struct rte_mbuf *tx_pkt = NULL;
 	int nb_rx, nb_sent;
-	struct rte_security_session *ses;
+	void *ses;
 	struct rte_security_ctx *ctx;
 	uint32_t ol_flags;
 	bool outer_ipv4;
@@ -1520,8 +1505,8 @@ inline_ipsec_testsuite_setup(void)
 
 	printf("Generate %d packets\n", MAX_TRAFFIC_BURST);
 
-	nb_rxd = RTE_TEST_RX_DESC_DEFAULT;
-	nb_txd = RTE_TEST_TX_DESC_DEFAULT;
+	nb_rxd = RX_DESC_DEFAULT;
+	nb_txd = TX_DESC_DEFAULT;
 
 	/* configuring port 0 for the test is enough */
 	port_id = 0;

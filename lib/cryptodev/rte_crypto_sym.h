@@ -589,8 +589,6 @@ struct rte_crypto_sym_xform {
 	};
 };
 
-struct rte_cryptodev_sym_session;
-
 /**
  * Symmetric Cryptographic Operation.
  *
@@ -627,12 +625,10 @@ struct rte_crypto_sym_op {
 
 	RTE_STD_C11
 	union {
-		struct rte_cryptodev_sym_session *session;
-		/**< Handle for the initialised session context */
+		void *session;
+		/**< Handle for the initialised crypto/security session context */
 		struct rte_crypto_sym_xform *xform;
 		/**< Session-less API crypto operation parameters */
-		struct rte_security_session *sec_session;
-		/**< Handle for the initialised security session context */
 	};
 
 	RTE_STD_C11
@@ -932,8 +928,7 @@ __rte_crypto_sym_op_sym_xforms_alloc(struct rte_crypto_sym_op *sym_op,
  * @param	sess	cryptodev session
  */
 static inline int
-__rte_crypto_sym_op_attach_sym_session(struct rte_crypto_sym_op *sym_op,
-		struct rte_cryptodev_sym_session *sess)
+__rte_crypto_sym_op_attach_sym_session(struct rte_crypto_sym_op *sym_op, void *sess)
 {
 	sym_op->session = sess;
 

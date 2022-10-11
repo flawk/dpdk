@@ -28,9 +28,6 @@
 
 #define RTE_PORT_ALL            (~(portid_t)0x0)
 
-#define RTE_TEST_RX_DESC_MAX    2048
-#define RTE_TEST_TX_DESC_MAX    2048
-
 #define RTE_PORT_STOPPED        (uint16_t)0
 #define RTE_PORT_STARTED        (uint16_t)1
 #define RTE_PORT_CLOSED         (uint16_t)2
@@ -66,6 +63,9 @@ extern uint8_t cl_quit;
 
 /* The prefix of the mbuf pool names created by the application. */
 #define MBUF_POOL_NAME_PFX "mb_pool"
+
+#define RX_DESC_MAX    2048
+#define TX_DESC_MAX    2048
 
 #define MAX_PKT_BURST 512
 #define DEF_PKT_BURST 32
@@ -562,7 +562,7 @@ extern uint16_t stats_period;
 extern struct rte_eth_xstat_name *xstats_display;
 extern unsigned int xstats_display_num;
 
-extern uint16_t hairpin_mode;
+extern uint32_t hairpin_mode;
 
 #ifdef RTE_LIB_LATENCYSTATS
 extern uint8_t latencystats_enabled;
@@ -580,6 +580,7 @@ extern uint32_t max_rx_pkt_len;
  * Configuration of packet segments used to scatter received packets
  * if some of split features is configured.
  */
+extern uint32_t rx_pkt_hdr_protos[MAX_SEGS_BUFFER_SPLIT];
 extern uint16_t rx_pkt_seg_lengths[MAX_SEGS_BUFFER_SPLIT];
 extern uint8_t  rx_pkt_nb_segs; /**< Number of segments to split */
 extern uint16_t rx_pkt_seg_offsets[MAX_SEGS_BUFFER_SPLIT];
@@ -851,6 +852,9 @@ inc_tx_burst_stats(struct fwd_stream *fs, uint16_t nb_tx)
 unsigned int parse_item_list(const char *str, const char *item_name,
 			unsigned int max_items,
 			unsigned int *parsed_items, int check_unique_values);
+unsigned int parse_hdrs_list(const char *str, const char *item_name,
+			unsigned int max_item,
+			unsigned int *parsed_items, int check_unique_values);
 void launch_args_parse(int argc, char** argv);
 void cmd_reconfig_device_queue(portid_t id, uint8_t dev, uint8_t queue);
 void cmdline_read_from_file(const char *filename);
@@ -966,6 +970,10 @@ void port_flow_tunnel_create(portid_t port_id, const struct tunnel_ops *ops);
 int port_flow_isolate(portid_t port_id, int set);
 int port_meter_policy_add(portid_t port_id, uint32_t policy_id,
 		const struct rte_flow_action *actions);
+struct rte_flow_meter_profile *port_meter_profile_get_by_id(portid_t port_id,
+							    uint32_t id);
+struct rte_flow_meter_policy *port_meter_policy_get_by_id(portid_t port_id,
+							  uint32_t id);
 
 void rx_ring_desc_display(portid_t port_id, queueid_t rxq_id, uint16_t rxd_id);
 void tx_ring_desc_display(portid_t port_id, queueid_t txq_id, uint16_t txd_id);
@@ -1002,6 +1010,8 @@ void set_record_core_cycles(uint8_t on_off);
 void set_record_burst_stats(uint8_t on_off);
 void set_verbose_level(uint16_t vb_level);
 void set_rx_pkt_segments(unsigned int *seg_lengths, unsigned int nb_segs);
+void set_rx_pkt_hdrs(unsigned int *seg_protos, unsigned int nb_segs);
+void show_rx_pkt_hdrs(void);
 void show_rx_pkt_segments(void);
 void set_rx_pkt_offsets(unsigned int *seg_offsets, unsigned int nb_offs);
 void show_rx_pkt_offsets(void);
@@ -1055,8 +1065,8 @@ rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 	       uint16_t nb_rx_desc, unsigned int socket_id,
 	       struct rte_eth_rxconf *rx_conf, struct rte_mempool *mp);
 
-int set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate);
-int set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate,
+int set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint32_t rate);
+int set_vf_rate_limit(portid_t port_id, uint16_t vf, uint32_t rate,
 				uint64_t q_msk);
 
 int set_rxq_avail_thresh(portid_t port_id, uint16_t queue_id,

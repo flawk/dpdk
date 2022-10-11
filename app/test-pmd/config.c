@@ -2125,6 +2125,29 @@ port_meter_policy_add(portid_t port_id, uint32_t policy_id,
 	return ret;
 }
 
+struct rte_flow_meter_profile *
+port_meter_profile_get_by_id(portid_t port_id, uint32_t id)
+{
+	struct rte_mtr_error error;
+	struct rte_flow_meter_profile *profile;
+
+	profile = rte_mtr_meter_profile_get(port_id, id, &error);
+	if (!profile)
+		print_mtr_err_msg(&error);
+	return profile;
+}
+struct rte_flow_meter_policy *
+port_meter_policy_get_by_id(portid_t port_id, uint32_t id)
+{
+	struct rte_mtr_error error;
+	struct rte_flow_meter_policy *policy;
+
+	policy = rte_mtr_meter_policy_get(port_id, id, &error);
+	if (!policy)
+		print_mtr_err_msg(&error);
+	return policy;
+}
+
 /** Validate flow rule. */
 int
 port_flow_validate(portid_t port_id,
@@ -2750,6 +2773,9 @@ port_queue_action_handle_update(portid_t port_id,
 	struct rte_flow_error error;
 	struct rte_flow_action_handle *action_handle;
 	struct queue_job *job;
+	struct port_indirect_action *pia;
+	struct rte_flow_update_meter_mark mtr_update;
+	const void *update;
 
 	action_handle = port_action_handle_get_by_id(port_id, id);
 	if (!action_handle)
@@ -2768,8 +2794,27 @@ port_queue_action_handle_update(portid_t port_id,
 	}
 	job->type = QUEUE_JOB_TYPE_ACTION_UPDATE;
 
+	pia = action_get_by_id(port_id, id);
+	if (!pia) {
+		free(job);
+		return -EINVAL;
+	}
+
+	if (pia->type == RTE_FLOW_ACTION_TYPE_METER_MARK) {
+		rte_memcpy(&mtr_update.meter_mark, action->conf,
+			sizeof(struct rte_flow_action_meter_mark));
+		mtr_update.profile_valid = 1;
+		mtr_update.policy_valid  = 1;
+		mtr_update.color_mode_valid  = 1;
+		mtr_update.init_color_valid  = 1;
+		mtr_update.state_valid  = 1;
+		update = &mtr_update;
+	} else {
+		update = action;
+	}
+
 	if (rte_flow_async_action_handle_update(port_id, queue_id, &attr,
-				    action_handle, action, job, &error)) {
+				    action_handle, update, job, &error)) {
 		free(job);
 		return port_flow_complain(&error);
 	}
@@ -4844,6 +4889,114 @@ show_rx_pkt_segments(void)
 	}
 }
 
+static const char *get_ptype_str(uint32_t ptype)
+{
+	if ((ptype & (RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_TCP)) ==
+		(RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_TCP))
+		return "ipv4-tcp";
+	else if ((ptype & (RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_UDP)) ==
+		(RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_UDP))
+		return "ipv4-udp";
+	else if ((ptype & (RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_SCTP)) ==
+		(RTE_PTYPE_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_L4_SCTP))
+		return "ipv4-sctp";
+	else if ((ptype & (RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_TCP)) ==
+		(RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_TCP))
+		return "ipv6-tcp";
+	else if ((ptype & (RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_UDP)) ==
+		(RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_UDP))
+		return "ipv6-udp";
+	else if ((ptype & (RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_SCTP)) ==
+		(RTE_PTYPE_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_L4_SCTP))
+		return "ipv6-sctp";
+	else if ((ptype & RTE_PTYPE_L4_TCP) == RTE_PTYPE_L4_TCP)
+		return "tcp";
+	else if ((ptype & RTE_PTYPE_L4_UDP) == RTE_PTYPE_L4_UDP)
+		return "udp";
+	else if ((ptype & RTE_PTYPE_L4_SCTP) == RTE_PTYPE_L4_SCTP)
+		return "sctp";
+	else if ((ptype & RTE_PTYPE_L3_IPV4_EXT_UNKNOWN) == RTE_PTYPE_L3_IPV4_EXT_UNKNOWN)
+		return "ipv4";
+	else if ((ptype & RTE_PTYPE_L3_IPV6_EXT_UNKNOWN) == RTE_PTYPE_L3_IPV6_EXT_UNKNOWN)
+		return "ipv6";
+	else if ((ptype & RTE_PTYPE_L2_ETHER) == RTE_PTYPE_L2_ETHER)
+		return "eth";
+
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_TCP)) ==
+		(RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_TCP))
+		return "inner-ipv4-tcp";
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_UDP)) ==
+		(RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_UDP))
+		return "inner-ipv4-udp";
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_SCTP)) ==
+		(RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_SCTP))
+		return "inner-ipv4-sctp";
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_TCP)) ==
+		(RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_TCP))
+		return "inner-ipv6-tcp";
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_UDP)) ==
+		(RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_UDP))
+		return "inner-ipv6-udp";
+	else if ((ptype & (RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_SCTP)) ==
+		(RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN | RTE_PTYPE_INNER_L4_SCTP))
+		return "inner-ipv6-sctp";
+	else if ((ptype & RTE_PTYPE_INNER_L4_TCP) == RTE_PTYPE_INNER_L4_TCP)
+		return "inner-tcp";
+	else if ((ptype & RTE_PTYPE_INNER_L4_UDP) == RTE_PTYPE_INNER_L4_UDP)
+		return "inner-udp";
+	else if ((ptype & RTE_PTYPE_INNER_L4_SCTP) == RTE_PTYPE_INNER_L4_SCTP)
+		return "inner-sctp";
+	else if ((ptype & RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN) ==
+		RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN)
+		return "inner-ipv4";
+	else if ((ptype & RTE_PTYPE_INNER_L3_IPV6_EXT_UNKNOWN) ==
+		RTE_PTYPE_INNER_L3_IPV4_EXT_UNKNOWN)
+		return "inner-ipv6";
+	else if ((ptype & RTE_PTYPE_INNER_L2_ETHER) == RTE_PTYPE_INNER_L2_ETHER)
+		return "inner-eth";
+	else if ((ptype & RTE_PTYPE_TUNNEL_GRENAT) == RTE_PTYPE_TUNNEL_GRENAT)
+		return "grenat";
+	else
+		return "unsupported";
+}
+
+void
+show_rx_pkt_hdrs(void)
+{
+	uint32_t i, n;
+
+	n = rx_pkt_nb_segs;
+	printf("Number of segments: %u\n", n);
+	if (n) {
+		printf("Packet segs: ");
+		for (i = 0; i < n - 1; i++)
+			printf("%s, ", get_ptype_str(rx_pkt_hdr_protos[i]));
+		printf("payload\n");
+	}
+}
+
+void
+set_rx_pkt_hdrs(unsigned int *seg_hdrs, unsigned int nb_segs)
+{
+	unsigned int i;
+
+	if (nb_segs + 1 > MAX_SEGS_BUFFER_SPLIT) {
+		printf("nb segments per RX packets=%u > "
+		       "MAX_SEGS_BUFFER_SPLIT - ignored\n", nb_segs + 1);
+		return;
+	}
+
+	memset(rx_pkt_hdr_protos, 0, sizeof(rx_pkt_hdr_protos));
+
+	for (i = 0; i < nb_segs; i++)
+		rx_pkt_hdr_protos[i] = (uint32_t)seg_hdrs[i];
+	/*
+	 * We calculate the number of hdrs, but payload is not included,
+	 * so rx_pkt_nb_segs would increase 1.
+	 */
+	rx_pkt_nb_segs = nb_segs + 1;
+}
+
 void
 set_rx_pkt_segments(unsigned int *seg_lengths, unsigned int nb_segs)
 {
@@ -5818,7 +5971,7 @@ set_vf_traffic(portid_t port_id, uint8_t is_rx, uint16_t vf, uint8_t on)
 }
 
 int
-set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate)
+set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint32_t rate)
 {
 	int diag;
 	struct rte_eth_link link;
@@ -5846,7 +5999,7 @@ set_queue_rate_limit(portid_t port_id, uint16_t queue_idx, uint16_t rate)
 }
 
 int
-set_vf_rate_limit(portid_t port_id, uint16_t vf, uint16_t rate, uint64_t q_msk)
+set_vf_rate_limit(portid_t port_id, uint16_t vf, uint32_t rate, uint64_t q_msk)
 {
 	int diag = -ENOTSUP;
 

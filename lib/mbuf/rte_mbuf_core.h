@@ -467,13 +467,24 @@ struct rte_mbuf {
 	RTE_MARKER cacheline0;
 
 	void *buf_addr;           /**< Virtual address of segment buffer. */
+#if RTE_IOVA_AS_PA
 	/**
 	 * Physical address of segment buffer.
+	 * This field is undefined if the build is configured to use only
+	 * virtual address as IOVA (i.e. RTE_IOVA_AS_PA is 0).
 	 * Force alignment to 8-bytes, so as to ensure we have the exact
 	 * same mbuf cacheline0 layout for 32-bit and 64-bit. This makes
 	 * working on vector drivers easier.
 	 */
 	rte_iova_t buf_iova __rte_aligned(sizeof(rte_iova_t));
+#else
+	/**
+	 * Next segment of scattered packet.
+	 * This field is valid when physical address field is undefined.
+	 * Otherwise next pointer in the second cache line will be used.
+	 */
+	struct rte_mbuf *next;
+#endif
 
 	/* next 8 bytes are initialised on RX descriptor rearm */
 	RTE_MARKER64 rearm_data;
@@ -589,11 +600,19 @@ struct rte_mbuf {
 	/* second cache line - fields only used in slow path or on TX */
 	RTE_MARKER cacheline1 __rte_cache_min_aligned;
 
+#if RTE_IOVA_AS_PA
 	/**
-	 * Next segment of scattered packet. Must be NULL in the last segment or
-	 * in case of non-segmented packet.
+	 * Next segment of scattered packet. Must be NULL in the last
+	 * segment or in case of non-segmented packet.
 	 */
 	struct rte_mbuf *next;
+#else
+	/**
+	 * Reserved for dynamic fields
+	 * when the next pointer is in first cache line (i.e. RTE_IOVA_AS_PA is 0).
+	 */
+	uint64_t dynfield2;
+#endif
 
 	/* fields to support TX offloads */
 	RTE_STD_C11
@@ -737,7 +756,7 @@ struct rte_mbuf_ext_shared_info {
  *   The offset into the data to calculate address from.
  */
 #define rte_pktmbuf_iova_offset(m, o) \
-	(rte_iova_t)((m)->buf_iova + (m)->data_off + (o))
+	(rte_iova_t)(rte_mbuf_iova_get(m) + (m)->data_off + (o))
 
 /**
  * A macro that returns the IO address that points to the start of the

@@ -278,7 +278,7 @@ show config
 Displays the configuration of the application.
 The configuration comes from the command-line, the runtime or the application defaults::
 
-   testpmd> show config (rxtx|cores|fwd|rxoffs|rxpkts|txpkts|txtimes)
+   testpmd> show config (rxtx|cores|fwd|rxoffs|rxpkts|rxhdrs|txpkts|txtimes)
 
 The available information categories are:
 
@@ -290,7 +290,9 @@ The available information categories are:
 
 * ``rxoffs``: Packet offsets for RX split.
 
-* ``rxpkts``: Packets to RX split configuration.
+* ``rxpkts``: Packets to RX length-based split configuration.
+
+* ``rxhdrs``: Packets to RX proto-based split configuration.
 
 * ``txpkts``: Packets to TX configuration.
 
@@ -798,6 +800,20 @@ mbuf for remaining segments will be allocated from the last valid pool).
 
 Where x[,y]* represents a CSV list of values, without white space. Zero value
 means to use the corresponding memory pool data buffer size.
+
+set rxhdrs
+~~~~~~~~~~
+
+Set the protocol headers of segments to scatter packets on receiving
+if split feature is engaged.
+Affects only the queues configured with split offloads
+(currently BUFFER_SPLIT is supported only).
+
+   testpmd> set rxhdrs (eth[,ipv4]*)
+
+Where eth[,ipv4]* represents a CSV list of values, without white space.
+If the list of offsets is shorter than the list of segments,
+zero offsets will be used for the remaining segments.
 
 set txpkts
 ~~~~~~~~~~
@@ -1537,7 +1553,7 @@ Enable or disable a per port Rx offloading on all Rx queues of a port::
 * ``offloading``: can be any of these offloading capability:
                   vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
                   qinq_strip, outer_ipv4_cksum, macsec_strip,
-                  header_split, vlan_filter, vlan_extend, jumbo_frame,
+                  vlan_filter, vlan_extend, jumbo_frame,
                   scatter, timestamp, security, keep_crc, rss_hash
 
 This command should be run when the port is stopped, or else it will fail.
@@ -1552,7 +1568,7 @@ Enable or disable a per queue Rx offloading only on a specific Rx queue::
 * ``offloading``: can be any of these offloading capability:
                   vlan_strip, ipv4_cksum, udp_cksum, tcp_cksum, tcp_lro,
                   qinq_strip, outer_ipv4_cksum, macsec_strip,
-                  header_split, vlan_filter, vlan_extend, jumbo_frame,
+                  vlan_filter, vlan_extend, jumbo_frame,
                   scatter, timestamp, security, keep_crc
 
 This command should be run when the port is stopped, or else it will fail.
@@ -2428,15 +2444,15 @@ set port meter dscp table
 
 Set meter dscp table for the ethernet device::
 
-   testpmd> set port meter dscp table (port_id) (mtr_id) [(dscp_tbl_entry0) \
-   (dscp_tbl_entry1)...(dscp_tbl_entry63)]
+   testpmd> set port meter dscp table (port_id) (mtr_id) (proto) \
+   [(dscp_tbl_entry0) (dscp_tbl_entry1)...(dscp_tbl_entry63)]
 
 set port meter vlan table
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 Set meter VLAN table for the Ethernet device::
 
-   testpmd> set port meter vlan table (port_id) (mtr_id) [(vlan_tbl_entry0) \
-   (vlan_tbl_entry1)...(vlan_tbl_entry15)]
+   testpmd> set port meter vlan table (port_id) (mtr_id) (proto) \
+   [(vlan_tbl_entry0) (vlan_tbl_entry1)...(vlan_tbl_entry15)]
 
 set port meter protocol
 ~~~~~~~~~~~~~~~~~~~~~~~
@@ -3687,6 +3703,13 @@ This section lists supported pattern items and their attributes, if any.
   - ``ctrl {unsigned}``: PPP control.
   - ``proto_id {unsigned}``: PPP protocol identifier.
 
+- ``meter``: match meter color.
+
+  - ``color {value}``: meter color value (green/yellow/red).
+
+- ``send_to_kernel``: send packets to kernel.
+
+
 Actions list
 ^^^^^^^^^^^^
 
@@ -3966,6 +3989,14 @@ This section lists supported actions and their attributes, if any.
   the entity represented by the given ethdev
 
   - ``ethdev_port_id {unsigned}``: ethdev port ID
+
+- ``meter_mark``:  meter the directed packets using profile and policy
+
+  - ``mtr_profile {unsigned}``: meter profile ID to use
+  - ``mtr_policy {unsigned}``: meter policy ID to use
+  - ``mtr_color_mode {unsigned}``: meter color-awareness mode (blind/aware)
+  - ``mtr_init_color {value}``: initial color value (green/yellow/red)
+  - ``mtr_state {unsigned}``: meter state (disabled/enabled)
 
 Destroying flow rules
 ~~~~~~~~~~~~~~~~~~~~~

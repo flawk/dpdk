@@ -545,6 +545,7 @@ cmd_pipeline_codegen(char **tokens,
 	code_file = fopen(tokens[3], "w");
 	if (!code_file) {
 		snprintf(out, out_size, "Cannot open file %s.\n", tokens[3]);
+		fclose(spec_file);
 		return;
 	}
 
@@ -641,7 +642,7 @@ cmd_pipeline_libbuild(char **tokens,
 	buffer = malloc(MAX_LINE_SIZE);
 	if (!buffer) {
 		snprintf(out, out_size, MSG_OUT_OF_MEMORY);
-		return;
+		goto free;
 	}
 
 	snprintf(buffer,

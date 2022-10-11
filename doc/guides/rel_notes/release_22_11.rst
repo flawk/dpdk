@@ -55,6 +55,52 @@ New Features
      Also, make sure to start the actual text at the margin.
      =======================================================
 
+* **Added initial LoongArch architecture support.**
+
+  Added EAL implementation for LoongArch architecture.
+  The initial devices the porting was tested on included Loongson 3A5000,
+  Loongson 3C5000 and Loongson 3C5000L.
+  In theory this implementation should work with any target based on
+  ``LoongArch`` ISA.
+
+* **Added support for multiple mbuf pools per ethdev Rx queue.**
+
+  The capability allows application to provide many mempools
+  of different size, and PMD and/or NIC to choose a memory pool
+  based on the packet's length and/or Rx buffers availability.
+
+* **Added support for congestion management in ethdev.**
+
+  Added new API functions ``rte_eth_cman_config_init()``,
+  ``rte_eth_cman_config_get()``, ``rte_eth_cman_config_set()``,
+  ``rte_eth_cman_info_get()`` to support congestion management.
+
+* **Added protocol header based buffer split.**
+
+  * Added ``rte_eth_buffer_split_get_supported_hdr_ptypes()`` to get supported
+    header protocols to split at.
+  * Supported protocol-based buffer split using added ``proto_hdr``
+    in structure ``rte_eth_rxseg_split``.
+
+* **Added ethdev Rx/Tx descriptor dump API.**
+
+  Added the ethdev Rx/Tx descriptor dump API which provides functions
+  for querying descriptor from device.
+  The descriptor information differs in different NICs.
+  The information demonstrates I/O process which is important for debug.
+  The dump format is vendor-specific.
+
+* **Added ethdev hairpin memory configuration options.**
+
+  Added new configuration flags for hairpin queues in ``rte_eth_hairpin_conf``:
+
+  * ``use_locked_device_memory``
+  * ``use_rte_memory``
+  * ``force_memory``
+
+  Each flag has a corresponding capability flag
+  in ``struct rte_eth_hairpin_queue_cap``.
+
 * **Added configuration for asynchronous flow connection tracking.**
 
   Added connection tracking action number hint to ``rte_flow_configure``
@@ -66,13 +112,44 @@ New Features
   Added new function ``rte_flow_async_action_handle_query()``,
   to query the action asynchronously.
 
+* **Extended metering and marking support in the flow API.**
+
+  * Added METER_COLOR item to match color marker set by a meter.
+  * Added ability to set color marker via modify field flow API.
+  * Added meter API to get a pointer to profile/policy by their ID.
+  * Added METER_MARK action for metering with lockless profile/policy access.
+
+* **Added flow offload action to route packets to kernel.**
+
+  Added new flow action which allows application to re-route packets
+  directly to the kernel without software involvement.
+
+* **Updated AF_XDP driver.**
+
+  * Made compatible with libbpf v0.8.0 (when used with libxdp).
+
 * **Updated Intel iavf driver.**
 
   * Added flow subscription support.
 
+* **Updated Intel ice driver.**
+
+  * Added protocol based buffer split support in scalar path.
+
 * **Updated Marvell cnxk driver.**
 
   * Added support for flow action REPRESENTED_PORT.
+
+* **Added Microsoft mana driver.**
+
+* **Updated Netronome nfp driver.**
+
+  Added the needed data structures and logics to support flow API offload:
+
+  * Added the support of flower firmware.
+  * Added the flower service infrastructure.
+  * Added the control message interactive channels between PMD and firmware.
+  * Added the support of representor port.
 
 * **Updated NXP dpaa2 driver.**
 
@@ -102,6 +179,16 @@ New Features
   * Added AES-CCM support in lookaside protocol (IPsec) for CN9K & CN10K.
   * Added AES & DES DOCSIS algorithm support in lookaside crypto for CN9K.
 
+* **Updated aesni_mb crypto driver.**
+
+  * Added support for 8-byte and 16-byte tags for ZUC-EIA3-256.
+
+* **Added bbdev operation for FFT processing.**
+
+  Added a new operation type in bbdev for FFT processing with new functions
+  ``rte_bbdev_enqueue_fft_ops``, ``rte_bbdev_dequeue_fft_ops``,
+  and related structures.
+
 * **Added eventdev adapter instance get API.**
 
   * Added ``rte_event_eth_rx_adapter_instance_get`` to get Rx adapter
@@ -123,6 +210,32 @@ New Features
   into single event containing ``rte_event_vector``
   whose event type is ``RTE_EVENT_TYPE_CRYPTODEV_VECTOR``.
 
+* **Added NitroSketch in membership library.**
+
+  Added a new data structure called sketch into membership library,
+  to profile the traffic efficiently.
+  NitroSketch provides high-fidelity approximate measurements
+  and appears as a promising alternative to traditional approaches
+  such as packet sampling.
+
+* **Added Intel uncore frequency control API to the power library.**
+
+  Added API to allow uncore frequency adjustment.
+  This is done through manipulating related uncore frequency control
+  sysfs entries to adjust the minimum and maximum uncore frequency values,
+  which works on Linux with Intel hardware only.
+
+* **Rewritten pmdinfo script.**
+
+  The ``dpdk-pmdinfo.py`` script was rewritten to produce valid JSON only.
+  PCI-IDs parsing has been removed.
+  To get a similar output to the (now removed) ``-r/--raw`` flag,
+  the following command may be used:
+
+  .. code-block:: sh
+
+     strings $dpdk_binary_or_driver | sed -n 's/^PMD_INFO_STRING= //p'
+
 
 Removed Items
 -------------
@@ -136,6 +249,8 @@ Removed Items
    Also, make sure to start the actual text at the margin.
    =======================================================
 
+* mem: Removed not implemented and deprecated ``rte_malloc_set_limit``.
+
 * ethdev: removed ``RTE_FLOW_ITEM_TYPE_PF``;
   use ``RTE_FLOW_ITEM_TYPE_REPRESENTED_PORT``.
 
@@ -147,6 +262,11 @@ Removed Items
 
 * ethdev: removed ``RTE_FLOW_ACTION_TYPE_PHY_PORT``;
   use ``RTE_FLOW_ACTION_TYPE_REPRESENTED_PORT``.
+
+* ethdev: removed ``OF_SET_MPLS_TTL``, ``OF_DEC_MPLS_TTL``,
+  ``OF_SET_NW_TTL``, ``OF_COPY_TTL_OUT`` and ``OF_COPY_TTL_IN``
+  which are not actually supported by any PMD.
+  ``MODIFY_FIELD`` action should be used to do packet edits via flow API.
 
 * vhost: Removed deprecated ``rte_vhost_gpa_to_vva`` and
   ``rte_vhost_get_queue_num`` helpers.
@@ -174,6 +294,9 @@ API Changes
 * eal: Updated ``rte_eal_remote_launch`` so it returns -EPIPE in case of
   a read or write error on the pipe, instead of calling ``rte_panic``.
 
+* eal: Updated return types for rte_{bsf,fls} inline functions
+  to be consistently ``uint32_t``.
+
 * mempool: Deprecated helper macro ``MEMPOOL_HEADER_SIZE()`` is removed.
   The replacement macro ``RTE_MEMPOOL_HEADER_SIZE()`` is internal only.
 
@@ -189,6 +312,12 @@ API Changes
   Use corresponding flags with ``RTE_MBUF_F_`` prefix instead.
   Application can use ``devtools/cocci/prefix_mbuf_offload_flags.cocci``
   to replace all occurrences of old mbuf flags in C code.
+
+* bus: Changed the device numa node to -1 when NUMA information is unavailable.
+  The ``dev->device.numa_node`` field is set by each bus driver for
+  every device it manages to indicate on which NUMA node this device lies.
+  When this information is unknown, the assigned value was not consistent
+  across the bus drivers. This similarly impacts ``rte_eth_dev_socket_id()``.
 
 * bus: Registering a bus has been marked as an internal API.
   External users may still register their bus using the ``bus_driver.h``
@@ -244,6 +373,25 @@ API Changes
   configuration (``dev_conf.fdir_conf``). Moved corresponding structures
   to internal API since some drivers still use it internally.
 
+* ethdev: Removed the Rx offload flag ``RTE_ETH_RX_OFFLOAD_HEADER_SPLIT``
+  and field ``split_hdr_size`` from the structure ``rte_eth_rxmode``
+  used to configure header split.
+  Instead, user can still use ``RTE_ETH_RX_OFFLOAD_BUFFER_SPLIT``
+  for per-queue packet split offload,
+  which is configured by ``rte_eth_rxseg_split``.
+
+* ethdev: The ``reserved`` field in the ``rte_eth_rxseg_split`` structure is
+  replaced with ``proto_hdr`` to support protocol header based buffer split.
+  User can choose length or protocol header to configure buffer split
+  according to NIC's capability.
+
+* ethdev: Changed the type of the parameter ``rate`` of the function
+  ``rte_eth_set_queue_rate_limit()`` from ``uint16_t`` to ``uint32_t``
+  to support more than 64 Gbps.
+  Changed the type of the parameter ``tx_rate`` of the functions
+  ``rte_pmd_bnxt_set_vf_rate_limit()`` and
+  ``rte_pmd_ixgbe_set_vf_rate_limit()`` in the same way for consistency.
+
 * ethdev: Promoted ``rte_eth_rx_metadata_negotiate()``
   from experimental to stable.
 
@@ -257,6 +405,24 @@ API Changes
 
 * ethdev: Promoted ``rte_flow_pick_transfer_proxy()``
   from experimental to stable.
+
+* ethdev: Banned the use of attributes ``ingress``/``egress`` in "transfer"
+  flows, as the final step of deprecation process that had been started
+  in DPDK 21.11. See items ``PORT_REPRESENTOR``, ``REPRESENTED_PORT``.
+
+* cryptodev: The structure ``rte_cryptodev_sym_session`` was made internal.
+  The API ``rte_cryptodev_sym_session_init`` and ``rte_cryptodev_sym_session_clear``
+  were removed and user would only need to call ``rte_cryptodev_sym_session_create``
+  and ``rte_cryptodev_sym_session_free`` to create/destroy sessions.
+  The API ``rte_cryptodev_sym_session_create`` was updated to take a single mempool
+  with element size big enough to hold session data and session private data.
+  All sample applications were updated to attach an opaque pointer for the session
+  to the ``rte_crypto_op`` while enqueuing.
+
+* security: The structure ``rte_security_session`` was made internal
+  and corresponding functions were updated to take/return an opaque session pointer.
+  The API ``rte_security_session_create`` was updated to take only one mempool
+  which has enough space to hold session and driver private data.
 
 * security: MACsec support is added which resulted in updates
   to structures ``rte_security_macsec_xform``, ``rte_security_macsec_stats``
@@ -307,9 +473,22 @@ ABI Changes
 * eal: Updated EAL thread names from ``lcore-worker-<lcore_id>`` to
   ``rte-worker-<lcore_id>`` so that DPDK can accommodate lcores higher than 99.
 
+* mbuf: Replaced ``buf_iova`` field with ``next`` field and added a new field
+  ``dynfield2`` at its place in second cacheline if ``RTE_IOVA_AS_PA`` is 0.
+
 * ethdev: enum ``RTE_FLOW_ITEM`` was affected by deprecation procedure.
 
 * ethdev: enum ``RTE_FLOW_ACTION`` was affected by deprecation procedure.
+
+* bbdev: enum ``rte_bbdev_op_type`` was affected to remove ``RTE_BBDEV_OP_TYPE_COUNT``
+  and to allow for futureproof enum insertion a padded ``RTE_BBDEV_OP_TYPE_SIZE_MAX``
+  macro is added.
+
+* bbdev: Structure ``rte_bbdev_driver_info`` was updated to add new parameters
+  for queue topology, device status using ``rte_bbdev_device_status``.
+
+* bbdev: Structure ``rte_bbdev_queue_data`` was updated to add new parameter
+  for enqueue status using ``rte_bbdev_enqueue_status``.
 
 * eventdev: Added ``evtim_drop_count`` field
   to ``rte_event_timer_adapter_stats`` structure.

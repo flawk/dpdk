@@ -156,6 +156,7 @@ static const struct rte_flow_desc_data rte_flow_desc_item[] = {
 			rte_flow_item_flex_conv),
 	MK_FLOW_ITEM(L2TPV2, sizeof(struct rte_flow_item_l2tpv2)),
 	MK_FLOW_ITEM(PPP, sizeof(struct rte_flow_item_ppp)),
+	MK_FLOW_ITEM(METER_COLOR, sizeof(struct rte_flow_item_meter_color)),
 };
 
 /** Generate flow_action[] entry. */
@@ -191,14 +192,7 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(PORT_ID, sizeof(struct rte_flow_action_port_id)),
 	MK_FLOW_ACTION(METER, sizeof(struct rte_flow_action_meter)),
 	MK_FLOW_ACTION(SECURITY, sizeof(struct rte_flow_action_security)),
-	MK_FLOW_ACTION(OF_SET_MPLS_TTL,
-		       sizeof(struct rte_flow_action_of_set_mpls_ttl)),
-	MK_FLOW_ACTION(OF_DEC_MPLS_TTL, 0),
-	MK_FLOW_ACTION(OF_SET_NW_TTL,
-		       sizeof(struct rte_flow_action_of_set_nw_ttl)),
 	MK_FLOW_ACTION(OF_DEC_NW_TTL, 0),
-	MK_FLOW_ACTION(OF_COPY_TTL_OUT, 0),
-	MK_FLOW_ACTION(OF_COPY_TTL_IN, 0),
 	MK_FLOW_ACTION(OF_POP_VLAN, 0),
 	MK_FLOW_ACTION(OF_PUSH_VLAN,
 		       sizeof(struct rte_flow_action_of_push_vlan)),
@@ -255,6 +249,8 @@ static const struct rte_flow_desc_data rte_flow_desc_action[] = {
 	MK_FLOW_ACTION(CONNTRACK, sizeof(struct rte_flow_action_conntrack)),
 	MK_FLOW_ACTION(PORT_REPRESENTOR, sizeof(struct rte_flow_action_ethdev)),
 	MK_FLOW_ACTION(REPRESENTED_PORT, sizeof(struct rte_flow_action_ethdev)),
+	MK_FLOW_ACTION(METER_MARK, sizeof(struct rte_flow_action_meter_mark)),
+	MK_FLOW_ACTION(SEND_TO_KERNEL, 0),
 };
 
 int
@@ -352,6 +348,13 @@ rte_flow_validate(uint16_t port_id,
 	const struct rte_flow_ops *ops = rte_flow_ops_get(port_id, error);
 	struct rte_eth_dev *dev = &rte_eth_devices[port_id];
 	int ret;
+
+	if (likely(!!attr) && attr->transfer &&
+	    (attr->ingress || attr->egress)) {
+		return rte_flow_error_set(error, EINVAL,
+					  RTE_FLOW_ERROR_TYPE_ATTR,
+					  attr, "cannot use attr ingress/egress with attr transfer");
+	}
 
 	if (unlikely(!ops))
 		return -rte_errno;

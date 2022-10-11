@@ -247,6 +247,7 @@ uint16_t rx_pkt_seg_lengths[MAX_SEGS_BUFFER_SPLIT];
 uint8_t  rx_pkt_nb_segs; /**< Number of segments to split */
 uint16_t rx_pkt_seg_offsets[MAX_SEGS_BUFFER_SPLIT];
 uint8_t  rx_pkt_nb_offs; /**< Number of specified offsets */
+uint32_t rx_pkt_hdr_protos[MAX_SEGS_BUFFER_SPLIT];
 
 /*
  * Configuration of packet segments used by the "txonly" processing engine.
@@ -288,10 +289,10 @@ queueid_t nb_txq = 1; /**< Number of TX queues per port. */
  * Configurable number of RX/TX ring descriptors.
  * Defaults are supplied by drivers via ethdev.
  */
-#define RTE_TEST_RX_DESC_DEFAULT 0
-#define RTE_TEST_TX_DESC_DEFAULT 0
-uint16_t nb_rxd = RTE_TEST_RX_DESC_DEFAULT; /**< Number of RX descriptors. */
-uint16_t nb_txd = RTE_TEST_TX_DESC_DEFAULT; /**< Number of TX descriptors. */
+#define RX_DESC_DEFAULT 0
+#define TX_DESC_DEFAULT 0
+uint16_t nb_rxd = RX_DESC_DEFAULT; /**< Number of RX descriptors. */
+uint16_t nb_txd = TX_DESC_DEFAULT; /**< Number of TX descriptors. */
 
 #define RTE_PMD_PARAM_UNSET -1
 /*
@@ -409,7 +410,7 @@ bool setup_on_probe_event = true;
 uint8_t clear_ptypes = true;
 
 /* Hairpin ports configuration mode. */
-uint16_t hairpin_mode;
+uint32_t hairpin_mode;
 
 /* Pretty printing of ethdev events */
 static const char * const eth_event_desc[] = {
@@ -1719,9 +1720,9 @@ init_config(void)
 	if (param_total_num_mbufs)
 		nb_mbuf_per_pool = param_total_num_mbufs;
 	else {
-		nb_mbuf_per_pool = RTE_TEST_RX_DESC_MAX +
+		nb_mbuf_per_pool = RX_DESC_MAX +
 			(nb_lcores * mb_mempool_cache) +
-			RTE_TEST_TX_DESC_MAX + MAX_PKT_BURST;
+			TX_DESC_MAX + MAX_PKT_BURST;
 		nb_mbuf_per_pool *= RTE_MAX_ETHPORTS;
 	}
 
@@ -2519,6 +2520,16 @@ port_is_started(portid_t port_id)
 	return 1;
 }
 
+#define HAIRPIN_MODE_RX_FORCE_MEMORY RTE_BIT32(8)
+#define HAIRPIN_MODE_TX_FORCE_MEMORY RTE_BIT32(9)
+
+#define HAIRPIN_MODE_RX_LOCKED_MEMORY RTE_BIT32(12)
+#define HAIRPIN_MODE_RX_RTE_MEMORY RTE_BIT32(13)
+
+#define HAIRPIN_MODE_TX_LOCKED_MEMORY RTE_BIT32(16)
+#define HAIRPIN_MODE_TX_RTE_MEMORY RTE_BIT32(17)
+
+
 /* Configure the Rx and Tx hairpin queues for the selected port. */
 static int
 setup_hairpin_queues(portid_t pi, portid_t p_pi, uint16_t cnt_pi)
@@ -2534,6 +2545,12 @@ setup_hairpin_queues(portid_t pi, portid_t p_pi, uint16_t cnt_pi)
 	uint16_t peer_tx_port = pi;
 	uint32_t manual = 1;
 	uint32_t tx_exp = hairpin_mode & 0x10;
+	uint32_t rx_force_memory = hairpin_mode & HAIRPIN_MODE_RX_FORCE_MEMORY;
+	uint32_t rx_locked_memory = hairpin_mode & HAIRPIN_MODE_RX_LOCKED_MEMORY;
+	uint32_t rx_rte_memory = hairpin_mode & HAIRPIN_MODE_RX_RTE_MEMORY;
+	uint32_t tx_force_memory = hairpin_mode & HAIRPIN_MODE_TX_FORCE_MEMORY;
+	uint32_t tx_locked_memory = hairpin_mode & HAIRPIN_MODE_TX_LOCKED_MEMORY;
+	uint32_t tx_rte_memory = hairpin_mode & HAIRPIN_MODE_TX_RTE_MEMORY;
 
 	if (!(hairpin_mode & 0xf)) {
 		peer_rx_port = pi;
@@ -2573,6 +2590,9 @@ setup_hairpin_queues(portid_t pi, portid_t p_pi, uint16_t cnt_pi)
 		hairpin_conf.peers[0].queue = i + nb_rxq;
 		hairpin_conf.manual_bind = !!manual;
 		hairpin_conf.tx_explicit = !!tx_exp;
+		hairpin_conf.force_memory = !!tx_force_memory;
+		hairpin_conf.use_locked_device_memory = !!tx_locked_memory;
+		hairpin_conf.use_rte_memory = !!tx_rte_memory;
 		diag = rte_eth_tx_hairpin_queue_setup
 			(pi, qi, nb_txd, &hairpin_conf);
 		i++;
@@ -2596,6 +2616,9 @@ setup_hairpin_queues(portid_t pi, portid_t p_pi, uint16_t cnt_pi)
 		hairpin_conf.peers[0].queue = i + nb_txq;
 		hairpin_conf.manual_bind = !!manual;
 		hairpin_conf.tx_explicit = !!tx_exp;
+		hairpin_conf.force_memory = !!rx_force_memory;
+		hairpin_conf.use_locked_device_memory = !!rx_locked_memory;
+		hairpin_conf.use_rte_memory = !!rx_rte_memory;
 		diag = rte_eth_rx_hairpin_queue_setup
 			(pi, qi, nb_rxd, &hairpin_conf);
 		i++;
@@ -2646,12 +2669,16 @@ rx_queue_setup(uint16_t port_id, uint16_t rx_queue_id,
 		mp_n = (i >= mbuf_data_size_n) ? mbuf_data_size_n - 1 : i;
 		mpx = mbuf_pool_find(socket_id, mp_n);
 		/* Handle zero as mbuf data buffer size. */
-		rx_seg->length = rx_pkt_seg_lengths[i] ?
-				   rx_pkt_seg_lengths[i] :
-				   mbuf_data_size[mp_n];
 		rx_seg->offset = i < rx_pkt_nb_offs ?
 				   rx_pkt_seg_offsets[i] : 0;
 		rx_seg->mp = mpx ? mpx : mp;
+		if (rx_pkt_hdr_protos[i] != 0 && rx_pkt_seg_lengths[i] == 0) {
+			rx_seg->proto_hdr = rx_pkt_hdr_protos[i];
+		} else {
+			rx_seg->length = rx_pkt_seg_lengths[i] ?
+					rx_pkt_seg_lengths[i] :
+					mbuf_data_size[mp_n];
+		}
 	}
 	rx_conf->rx_nseg = rx_pkt_nb_segs;
 	rx_conf->rx_seg = rx_useg;
